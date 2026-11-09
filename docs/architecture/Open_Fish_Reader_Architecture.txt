@@ -1,0 +1,1160 @@
+OPEN FISH READER
+Document d'architecture fonctionnelle et technique
+Version de conception : 1.0
+Date : 09/11/2026
+
+======================================================================
+1. OBJET DU LOGICIEL
+======================================================================
+
+Open Fish Reader est un logiciel local de depouillement scientifique des videos produites par Open Fish Counter.
+
+Il permet a un operateur de :
+- ouvrir le dossier source d'une station ;
+- selectionner une journee ;
+- lire en continu les courtes sequences video produites par Open Fish Counter ;
+- identifier les poissons observes ;
+- enregistrer leur sens de migration ;
+- mesurer leur longueur a partir d'une image ;
+- conserver les observations dans une base SQLite locale ;
+- consulter et corriger les observations anciennes ;
+- exporter les donnees ;
+- copier des snapshots et les sequences video utiles dans un dossier configurable.
+
+La video constitue la preuve associee a chaque observation.
+
+Le logiciel doit fonctionner hors ligne sous Windows et Debian.
+
+======================================================================
+2. TECHNOLOGIES RETENUES
+======================================================================
+
+- Langage : Python.
+- Interface graphique : PySide6 / Qt.
+- Base embarquee : SQLite.
+- Lecture et decodage video : PyAV reposant sur FFmpeg.
+- Configuration globale : JSON ou mecanisme de configuration Qt.
+- Export initial : CSV UTF-8.
+- Compatibilite : Windows et Debian.
+
+PyAV/FFmpeg est le moteur principal de lecture. Qt Multimedia n'est pas retenu comme moteur principal afin d'eviter les differences de positionnement entre lecture normale et navigation image par image.
+
+======================================================================
+3. PARCOURS GENERAL DE L'OPERATEUR
+======================================================================
+
+1. Ouverture du dossier source d'une station.
+2. Reconnaissance de la station a partir des fichiers JSON.
+3. Detection des journees disponibles.
+4. Selection d'une date.
+5. Indexation des evenements, videos et JSON de la journee.
+6. Lecture sequentielle et continue des videos.
+7. Arret sur une image lorsqu'un poisson est observe.
+8. Identification de l'espece.
+9. Enregistrement du sens de migration :
+   - +1 : montaison ;
+   - -1 : devalaison ;
+   - 0 : indetermine.
+10. Mesure facultative du poisson.
+11. Ajout eventuel d'un commentaire, d'un niveau de confiance ou d'un indicateur "a revoir".
+12. Validation de l'observation.
+13. Reprise eventuelle de la lecture.
+14. Consultation, correction et export des observations.
+
+L'operateur interprete lui-meme le sens selon l'orientation de la station. Le logiciel n'enregistre pas un mouvement gauche-droite ou droite-gauche.
+
+======================================================================
+4. ORGANISATION DES DONNEES SOURCE
+======================================================================
+
+Le dossier ouvert correspond directement a une station.
+
+Structure reelle attendue :
+
+Dossier_station/
+|-- 2026-11-08/
+|   |-- snapshots/
+|   |   `-- fichiers produits par Open Fish Counter, ignores par le Reader
+|   `-- videos/
+|       |-- Poses_RG_OFC_20261108_000233_part001.mp4
+|       |-- Poses_RG_OFC_20261108_000233_part001.json
+|       `-- ...
+|-- 2026-11-09/
+|   |-- snapshots/
+|   `-- videos/
+`-- ...
+
+Regles :
+- les dossiers de journee utilisent le format AAAA-MM-JJ ;
+- seul le sous-dossier videos est indexe ;
+- le sous-dossier snapshots produit par Open Fish Counter est ignore ;
+- les donnees source sont traitees autant que possible en lecture seule ;
+- les fichiers JSON ont priorite sur le nom de fichier et le chemin pour identifier les metadonnees ;
+- les incoherences sont signalees, jamais corrigees silencieusement.
+
+Ordre de priorite des sources de metadonnees :
+1. contenu du JSON ;
+2. nom du fichier ;
+3. dossier de la journee ;
+4. metadonnees du fichier en dernier recours.
+
+======================================================================
+5. FORMAT JSON OPEN FISH COUNTER
+======================================================================
+
+Exemple fourni : Poses_RG_OFC_20261108_000233_part001.json
+
+{
+    "schema_version": 1,
+    "record_type": "video_part",
+    "event_id": "Poses_RG_OFC_20261108_000233_993",
+    "station_name": "Poses RG OFC",
+    "video_file": "Poses_RG_OFC_20261108_000233_part001.mp4",
+    "part_number": 1,
+    "event_start_time": "2026-11-08T00:02:33.993+01:00",
+    "event_detection_time": "2026-11-08T00:02:34.299+01:00",
+    "video_start_time": "2026-11-08T00:02:33.993+01:00",
+    "video_end_time": "2026-11-08T00:02:34.654+01:00",
+    "frame_count": 12,
+    "recording_fps": 20.001,
+    "frame_width": 640,
+    "frame_height": 540
+}
+
+Utilisation des champs :
+- schema_version : choix du lecteur de schema JSON ;
+- record_type : verification du type video_part ;
+- event_id : regroupement des parties d'un meme evenement ;
+- station_name : reconnaissance et affichage de la station ;
+- video_file : association explicite JSON/MP4 ;
+- part_number : ordre des parties ;
+- event_start_time : debut global de l'evenement ;
+- event_detection_time : instant de detection ;
+- video_start_time : debut de la partie ;
+- video_end_time : fin de la partie ;
+- frame_count : controle et navigation ;
+- recording_fps : information de cadence et controle ;
+- frame_width/frame_height : resolution et mesure.
+
+Le fuseau horaire, par exemple +01:00, doit etre conserve.
+
+======================================================================
+6. EVENEMENTS ET PARTIES VIDEO
+======================================================================
+
+Un evenement logique est identifie par event_id. Il peut comprendre une ou plusieurs parties physiques :
+
+- part001 ;
+- part002 ;
+- part003 ;
+- etc.
+
+La liste principale affiche les evenements. Le moteur de lecture travaille sur les fichiers physiques.
+
+Regles :
+- les parties d'un meme evenement s'enchainent automatiquement ;
+- les evenements differents s'enchainent aussi automatiquement ;
+- aucune pause ni image noire n'est introduite aux changements de fichier ;
+- la vitesse de lecture est conservee ;
+- l'horodatage affiche est mis a jour immediatement ;
+- un saut temporel reel entre deux evenements peut etre indique discretement, sans attendre la duree du saut.
+
+======================================================================
+7. LECTURE VIDEO ET FLUIDITE
+======================================================================
+
+Les videos sont generalement tres courtes, souvent de 1 a 3 secondes, parfois moins d'une seconde. La fluidite de l'enchainement est une contrainte centrale.
+
+Architecture de lecture :
+- PyAV/FFmpeg decode la video ;
+- l'interface Qt ne doit jamais attendre directement une operation de decodage ;
+- le fichier suivant est ouvert et prepare pendant la lecture du fichier courant ;
+- ses premieres images sont placees dans un tampon ;
+- une seule petite fenetre de fichiers est preparee, jamais toute la journee ;
+- le segment precedent peut rester disponible pour faciliter son rechargement ;
+- les ecritures SQLite ne doivent pas bloquer l'affichage.
+
+Taches a separer :
+- interface graphique ;
+- decodage actif ;
+- prechargement ;
+- indexation ;
+- ecritures en base ;
+- copies de medias et sauvegardes.
+
+Parametres de vitesse :
+- minimum : x0,5 ;
+- maximum : x10 ;
+- pas : 0,5 ;
+- boutons - et + ;
+- affichage de la valeur courante ;
+- clic sur la valeur pour revenir a x1 ;
+- son desactive.
+
+Fin de journee :
+- pause sur la derniere image ;
+- aucun retour automatique au debut ;
+- affichage d'un recapitulatif.
+
+======================================================================
+8. COMMANDES ET NAVIGATION
+======================================================================
+
+Raccourcis principaux :
+- Espace : lecture / pause ;
+- Fleche haut : fichier physique precedent ;
+- Fleche bas : fichier physique suivant ;
+- Fleche gauche : image precedente ;
+- Fleche droite : image suivante ;
+- Ctrl + gauche : recul d'une seconde ;
+- Ctrl + droite : avance d'une seconde ;
+- + : augmenter la vitesse de 0,5 ;
+- - : reduire la vitesse de 0,5 ;
+- Echappe : annuler l'action ou la mesure ;
+- Entree : valider ;
+- Retour arriere : supprimer le dernier point de mesure ;
+- Ctrl + Z : annuler la derniere observation ;
+- Ctrl + P : ouvrir la table des passages ;
+- Ctrl + I : identification sans espece preselectionnee ;
+- F11 : plein ecran.
+
+Regles aux limites :
+- fleche gauche sur la premiere image : aucune action ;
+- fleche droite sur la derniere image : aucune action ;
+- la navigation image par image ne traverse jamais la limite du fichier ;
+- fleche haut ou bas change de fichier et l'ouvre sur sa premiere image ;
+- si la lecture etait active, elle continue apres un changement manuel ;
+- si elle etait en pause, elle reste en pause.
+
+Pause :
+- l'appui sur Pause arrete la lecture sur l'image actuellement affichee ;
+- cette regle s'applique meme au moment exact d'un changement de fichier.
+
+======================================================================
+9. CREATION D'UNE OBSERVATION
+======================================================================
+
+Une identification peut etre declenchee par :
+- clic gauche sur la video ;
+- bouton Identifier ;
+- raccourci clavier d'une espece.
+
+Ordre exact :
+1. reception du clic ou de la touche ;
+2. arret immediat de la lecture ;
+3. gel de la reference de l'image affichee ;
+4. memorisation de la partie video ;
+5. memorisation du numero d'image et, si disponible, du PTS ;
+6. memorisation de la position temporelle ;
+7. calcul de l'horodatage absolu ;
+8. ouverture de la fenetre d'identification.
+
+Meme a x10, l'observation est liee a l'image affichee lorsque l'action est recue. Elle ne doit pas etre liee a l'image suivante deja prechargee ni a l'heure d'ouverture effective de la fenetre.
+
+Apres validation :
+- reprise automatique configurable ;
+- si activee, reprise a partir de l'image suivante ;
+- sinon, maintien en pause sur l'image de l'observation.
+
+Apres annulation :
+- maintien en pause sur la meme image.
+
+======================================================================
+10. FENETRE D'IDENTIFICATION
+======================================================================
+
+La fenetre contient :
+- l'image figee ;
+- station, heure absolue, evenement, partie, image et position ;
+- choix de l'espece ;
+- choix du sens ;
+- confiance ;
+- indicateur A revoir ;
+- commentaire ;
+- choix Proche / Intermediaire / Loin ;
+- mesure ;
+- snapshot ;
+- extraction de la sequence ;
+- validation et annulation.
+
+Sens autorises :
+- +1 : montaison ;
+- -1 : devalaison ;
+- 0 : indetermine.
+
+Confiance :
+- certaine ;
+- probable ;
+- incertaine.
+
+Une identification incertaine peut automatiquement etre marquee A revoir.
+
+Cas particuliers tels que passage partiel, demi-tour, poisson stationnaire ou doublon potentiel sont geres par des indicateurs et/ou commentaires, sans ajouter d'autres valeurs de sens.
+
+======================================================================
+11. VALIDATION RAPIDE
+======================================================================
+
+Exemple : T correspond a la truite fario.
+
+Sequence rapide :
+1. appui sur T ;
+2. arret sur l'image courante ;
+3. ouverture avec TRF preselectionnee ;
+4. appui sur +, - ou 0 ;
+5. enregistrement immediat si la validation rapide est activee ;
+6. notification temporaire ;
+7. reprise facultative de la lecture.
+
+Exemples :
+- T puis + : truite en montaison ;
+- T puis - : truite en devalaison ;
+- T puis 0 : truite de sens indetermine.
+
+La validation rapide ne s'applique pas si une mesure est en cours ou si une information obligatoire manque.
+
+Ctrl + Z annule logiquement la derniere observation.
+
+======================================================================
+12. REFERENTIEL DES ESPECES
+======================================================================
+
+Le referentiel est configurable et stocke dans la base de la station.
+
+Champs :
+- identifiant interne ;
+- nom commun ;
+- nom scientifique facultatif ;
+- code SANDRE ;
+- code court obligatoire de trois caracteres ;
+- raccourci clavier facultatif ;
+- couleur ;
+- ordre d'affichage ;
+- actif/inactif.
+
+Exemples :
+- TRF : Truite fario ;
+- SAT : Saumon atlantique ;
+- ANG : Anguille europeenne ;
+- LPM : Lamproie marine ;
+- IND : Poisson indetermine.
+
+Regles :
+- le code court est unique, en majuscules et long de trois caracteres ;
+- deux especes actives ne peuvent pas utiliser le meme raccourci ;
+- les touches reservees au lecteur ne sont pas disponibles ;
+- une espece deja utilisee ne peut pas etre supprimee, seulement archivee ;
+- le code SANDRE est saisi ou importe, jamais devine ;
+- le nom et les codes de l'espece sont figes dans l'observation pour eviter qu'un renommage modifie silencieusement l'historique ;
+- IND est cree par defaut.
+
+Import/export du referentiel possible en CSV UTF-8.
+
+======================================================================
+13. MESURE DES POISSONS
+======================================================================
+
+Deux modes :
+- mesure simple a deux points ;
+- mesure multipoint par polyligne, notamment pour les anguilles ou poissons courbes.
+
+Commandes :
+- clic gauche : ajouter un point ;
+- Retour arriere : retirer le dernier point ;
+- Entree ou double-clic : terminer ;
+- Echappe : annuler ;
+- les points existants peuvent etre deplaces avant validation.
+
+Distance en pixels : somme des longueurs des segments entre les points successifs.
+
+Trois positions de calibration :
+- Proche ;
+- Intermediaire ;
+- Loin.
+
+L'operateur choisit la position. Elle n'est pas deduite automatiquement.
+
+Calcul : longueur_cm = longueur_pixels / ratio_pixels_par_cm.
+
+Donnees conservees :
+- liste ordonnee de tous les points ;
+- coordonnees en pixels ;
+- coordonnees normalisees ;
+- distance totale en pixels ;
+- position camera ;
+- calibration et version utilisees ;
+- ratio reellement applique ;
+- longueur calculee ;
+- image mesuree ;
+- dimensions de l'image.
+
+Si la calibration manque :
+- la distance en pixels peut etre enregistree ;
+- aucune longueur en centimetres n'est inventee ;
+- la mesure est signalee non convertie.
+
+Les anciennes mesures ne sont jamais recalculees silencieusement lorsque la calibration change.
+
+======================================================================
+14. CALIBRATIONS
+======================================================================
+
+Une table de calibrations est accessible depuis la barre superieure.
+
+Pour chaque calibration :
+- station ;
+- position Proche / Intermediaire / Loin ;
+- ratio en px/cm ;
+- debut de validite ;
+- fin eventuelle ;
+- version ;
+- auteur ;
+- commentaire ;
+- active/archivee.
+
+Regles :
+- ratio strictement positif ;
+- une calibration utilisee n'est plus modifiee directement ;
+- elle peut etre archivee et remplacee par une nouvelle version ;
+- une ancienne mesure garde son calibration_id et le ratio applique ;
+- affichage conseille : 3 decimales pour le ratio, 1 decimale pour la longueur.
+
+======================================================================
+15. STOCKAGE LOCAL ET BASE SQLITE
+======================================================================
+
+La base n'est pas placee dans le dossier source de la station.
+
+Windows :
+%LOCALAPPDATA%\OpenFishReader\
+
+Debian/Linux :
+~/.local/share/OpenFishReader/
+
+Organisation logique :
+- config/settings.json ;
+- databases/ ;
+- backups/ ;
+- logs/ ;
+- cache/.
+
+Une base SQLite par station, par exemple :
+poses-rg-ofc_a83f20c1.sqlite
+
+Le nom contient un slug lisible et une empreinte courte pour eviter les collisions.
+
+Un registre global associe :
+- nom de la station ;
+- dossier source courant ;
+- empreinte du dossier ;
+- base SQLite ;
+- derniere ouverture.
+
+Si un dossier a ete deplace, le Reader compare le nom de station, les dates, des noms de videos et des event_id afin de proposer une reassociation a la base existante.
+
+======================================================================
+16. MODELE SQLITE
+======================================================================
+
+Tables prevues :
+
+1. database_metadata
+- version du schema SQLite ;
+- versions de l'application ;
+- dates de creation et mise a jour ;
+- derniere sauvegarde.
+
+2. stations
+- nom, slug ;
+- chemin source absolu ;
+- empreinte du dossier ;
+- dossier d'extraction ;
+- dates d'ouverture.
+
+3. days
+- date ;
+- dossier relatif ;
+- statut d'indexation ;
+- nombres d'evenements et de parties ;
+- duree totale ;
+- anomalies ;
+- dates du premier et dernier evenement.
+
+4. events
+- event_id Open Fish Counter ;
+- journee ;
+- heures de debut et detection ;
+- premiere et derniere heure video ;
+- nombre de parties ;
+- nombre d'images ;
+- duree ;
+- statut de depouillement ;
+- position de reprise ;
+- indicateurs a revoir et anomalie.
+
+5. video_parts
+- evenement parent ;
+- part_number ;
+- chemins relatifs MP4 et JSON ;
+- noms declares ;
+- schema JSON et record_type ;
+- horaires ;
+- images, FPS et resolution declares ;
+- informations detectees dans le conteneur ;
+- taille, date de modification et empreinte ;
+- statut du media.
+
+6. species
+- referentiel des especes.
+
+7. operators
+- code, nom affiche, actif/archive.
+
+8. observations
+- UUID stable ;
+- evenement et partie ;
+- espece et copie figee de ses informations ;
+- sens -1/0/+1 ;
+- numero d'image, position, heure absolue et PTS ;
+- confiance ;
+- a revoir ;
+- passage partiel ;
+- doublon potentiel ;
+- commentaire ;
+- operateur ;
+- dates de creation et modification ;
+- annulation logique et motif.
+
+9. measurements
+- observation ;
+- methode ;
+- position camera ;
+- calibration ;
+- ratio applique ;
+- longueur pixels et centimetres ;
+- nombre de points ;
+- dimensions d'image ;
+- validite.
+
+10. measurement_points
+- mesure ;
+- ordre ;
+- x/y pixels ;
+- x/y normalises.
+
+11. calibrations
+- station, position, ratio, validite, version, auteur, statut.
+
+12. exported_media
+- type de media ;
+- partie source ;
+- chemins ;
+- noms ;
+- taille et empreinte ;
+- statut.
+
+13. observation_exported_media
+- table d'association permettant de relier plusieurs observations au meme media copie.
+
+14. observation_history
+- creation, modification, annulation, restauration, mesure, media, changement d'espece ;
+- ancienne et nouvelle valeur ;
+- operateur ;
+- date.
+
+15. anomalies
+- journee/evenement/partie ;
+- type ;
+- gravite ;
+- message ;
+- resolution.
+
+16. reader_state
+- reprise de la station ;
+- operateur ;
+- journee/evenement/partie/image ;
+- vitesse ;
+- filtres ;
+- preferences de reprise.
+
+17. exports_history
+- type, periode, filtres, destination, nombre de lignes et statut.
+
+Contraintes importantes :
+- sens limite a -1, 0, +1 ;
+- code espece de trois caracteres ;
+- numero de partie unique par evenement ;
+- mesure avec au moins deux points ;
+- ratio positif ;
+- observation liee a une partie de son propre evenement ;
+- pas de suppression physique d'une espece ou calibration utilisee ;
+- annulation logique des observations.
+
+Toutes les operations scientifiques critiques utilisent des transactions SQLite.
+
+======================================================================
+17. ETATS DE DEPOUILLEMENT
+======================================================================
+
+Evenement :
+- Non visionne ;
+- En cours ;
+- Termine ;
+- A revoir ;
+- Erreur.
+
+Regles :
+- Non visionne : aucune partie lue ;
+- En cours : evenement ouvert mais derniere image non atteinte ;
+- Termine : derniere image de la derniere partie atteinte ou validation manuelle ;
+- A revoir : evenement ou observation marque a revoir ;
+- Erreur : partie absente, illisible ou incoherente.
+
+Une video n'est pas marquee terminee simplement parce qu'elle a ete ouverte.
+
+Le Reader memorise :
+- derniere journee ;
+- evenement ;
+- fichier ;
+- image ;
+- position ;
+- vitesse ;
+- filtres ;
+- disposition de l'interface.
+
+Au redemarrage, il revient sur la bonne image mais reste en pause.
+
+======================================================================
+18. INTERFACE PRINCIPALE
+======================================================================
+
+Ecran d'accueil :
+- Ouvrir un dossier de station ;
+- Rouvrir la derniere station ;
+- stations recentes ;
+- parametres.
+
+Selection de journee :
+- date ;
+- nombre d'evenements ;
+- duree totale de video ;
+- progression ;
+- nombre d'observations ;
+- anomalies.
+
+Ecran principal :
+- bandeau superieur ;
+- colonne gauche des evenements ;
+- grande zone video centrale ;
+- colonne droite avec dernieres observations et totaux ;
+- bandeau inferieur de lecture.
+
+Colonne gauche :
+- evenements regroupes par heure ;
+- filtres Tous, Non visionnes, En cours, Termines, A revoir, Avec observations, Avec anomalies ;
+- une ligne par evenement, avec heure, nombre de parties, duree et statut.
+
+Zone centrale :
+- video ;
+- heure absolue ;
+- partie et image ;
+- vitesse ;
+- surimpressions de mesure ;
+- affichage masquable des informations techniques.
+
+Colonne droite :
+- onglet Dernieres observations ;
+- onglet Totaux de la journee ;
+- double-clic pour modifier une observation.
+
+Bandeau inferieur :
+- navigation ;
+- lecture/pause ;
+- image precedente/suivante ;
+- sauts d'une seconde ;
+- position ;
+- vitesse ;
+- Identifier ;
+- Snapshot ;
+- Extraire la sequence.
+
+Mode plein ecran et panneaux lateraux masquables.
+
+======================================================================
+19. BARRE DE MENUS ET OUTILS
+======================================================================
+
+Menus proposes :
+
+Fichier
+- Ouvrir un dossier de station ;
+- Stations recentes ;
+- Changer de dossier source ;
+- Reassocier une station deplacee ;
+- Fermer la station ;
+- Quitter.
+
+Depouillement
+- Choisir une journee ;
+- Reprendre le dernier depouillement ;
+- Afficher les passages enregistres ;
+- Afficher les observations a revoir ;
+- Marquer l'evenement termine ;
+- Marquer a revoir ;
+- Annuler la derniere observation.
+
+Donnees
+- Exporter les observations ;
+- Exporter la journee ;
+- Exporter une periode ;
+- Sauvegarder la base ;
+- Restaurer ;
+- Ouvrir le dossier des donnees applicatives.
+
+Etalonnages
+- Afficher la table des ratios ;
+- Ajouter/modifier/archiver une calibration ;
+- Consulter l'historique.
+
+Extractions
+- Configurer le dossier ;
+- Extraire l'evenement courant ;
+- Enregistrer l'image ;
+- Ouvrir le dossier ;
+- Lister les medias extraits.
+
+Affichage
+- Afficher/masquer les panneaux ;
+- Totaux ;
+- informations video ;
+- plein ecran ;
+- reinitialiser la disposition.
+
+Aide
+- Raccourcis ;
+- journal des erreurs ;
+- informations station ;
+- A propos.
+
+Barre d'outils rapide :
+- Ouvrir station ;
+- Journee ;
+- Passages ;
+- Calibrations ;
+- Exporter ;
+- Parametres.
+
+======================================================================
+20. TABLE DES PASSAGES ENREGISTRES
+======================================================================
+
+Accessible par bouton Passages, menu ou Ctrl + P.
+
+Periode precise :
+- date et heure de debut ;
+- date et heure de fin ;
+- millisecondes disponibles ;
+- bornes inclusives.
+
+Exemple :
+Du 01/01/2026 00:00:00.000
+Au 02/01/2026 15:00:00.000
+
+Raccourcis :
+- journee courante ;
+- aujourd'hui ;
+- sept derniers jours disponibles ;
+- mois courant ;
+- toute la base.
+
+Filtres :
+- espece/code ;
+- sens ;
+- confiance ;
+- operateur ;
+- avec/sans mesure ;
+- position camera ;
+- a revoir ;
+- snapshot ;
+- video extraite ;
+- evenement ;
+- fichier source ;
+- observations annulees.
+
+Colonnes principales :
+- ID ;
+- date et heure ;
+- espece ;
+- code ;
+- SANDRE ;
+- sens ;
+- longueur ;
+- position ;
+- confiance ;
+- a revoir ;
+- operateur ;
+- evenement ;
+- partie ;
+- image ;
+- snapshot ;
+- video ;
+- commentaire.
+
+Affichage virtualise et chargement par blocs, par exemple 500 lignes.
+
+Double-clic : ouverture en modification sur l'image originale si la source est disponible.
+
+Si la source manque : les donnees textuelles restent modifiables et le Reader propose de relocaliser le dossier.
+
+Les observations sont annulees logiquement, pas supprimees physiquement.
+
+======================================================================
+21. SNAPSHOTS ET EXTRACTIONS VIDEO
+======================================================================
+
+Le dossier racine d'extraction est configurable et distinct des sources et de la base.
+
+Organisation validee, sans sous-dossier par date :
+
+Dossier_extraction/
+`-- Poses_RG_OFC/
+    |-- images/
+    |   |-- TRF/
+    |   |-- ANG/
+    |   |-- SAT/
+    |   `-- IND/
+    `-- videos/
+        |-- TRF/
+        |-- ANG/
+        |-- SAT/
+        `-- IND/
+
+Snapshot :
+- image brute ;
+- image annotee facultative, notamment avec mesure ;
+- JPEG qualite 95 par defaut ;
+- PNG disponible.
+
+Extraction video :
+- copie complete de toutes les parties de l'evenement ;
+- simple copie de fichier ;
+- aucun decoupage ;
+- aucune fusion ;
+- aucun reencodage ;
+- format original conserve ;
+- JSON associes copies par defaut ;
+- parties conservees separement.
+
+Plusieurs observations de la meme espece dans le meme evenement reutilisent les memes fichiers copies. Une association plusieurs-a-plusieurs relie les medias aux observations.
+
+Un meme evenement peut etre copie dans plusieurs dossiers d'especes si plusieurs especes y sont observees.
+
+Si l'espece est corrigee :
+- les medias sont deplaces vers le nouveau code court si possible ;
+- la correction scientifique reste valide meme si le deplacement echoue ;
+- une anomalie de media est alors enregistree.
+
+======================================================================
+22. EXPORT DES DONNEES
+======================================================================
+
+Format initial : CSV UTF-8.
+
+Parametres par defaut :
+- separateur point-virgule ;
+- date ISO 8601 ;
+- virgule decimale en mode francais ;
+- observations annulees exclues ;
+- observations a revoir incluses.
+
+Perimetres :
+- journee courante ;
+- periode ;
+- filtres actifs de la table ;
+- toute la station.
+
+Une ligne par observation avec notamment :
+- identifiant ;
+- station ;
+- date ;
+- horodatage complet ;
+- heure, minute, seconde, milliseconde ;
+- video ;
+- position ;
+- image ;
+- espece ;
+- nom scientifique ;
+- code court ;
+- code SANDRE ;
+- sens numerique ;
+- sens textuel ;
+- position camera ;
+- pixels ;
+- ratio ;
+- longueur ;
+- confiance ;
+- a revoir ;
+- commentaire ;
+- operateur ;
+- chemins des medias ;
+- creation et modification.
+
+Les points de mesure sont exportes dans un second fichier measurement_points.csv.
+
+======================================================================
+23. SAUVEGARDES
+======================================================================
+
+Emplacement par defaut : dossier backups des donnees applicatives.
+
+Politique :
+- sauvegarde a la fermeture si la base a change ;
+- au maximum une sauvegarde automatique complete par jour ;
+- sauvegarde supplementaire avant migration du schema ;
+- conservation des dix sauvegardes recentes ;
+- conservation permanente des sauvegardes de migration.
+
+La sauvegarde utilise le mecanisme coherent de SQLite et non une simple copie pendant une transaction.
+
+Chaque sauvegarde est verifiee par ouverture et controle d'integrite.
+
+Commandes :
+- Sauvegarder sous ;
+- Restaurer une sauvegarde.
+
+======================================================================
+24. INDEXATION ET CONTROLES
+======================================================================
+
+Indexation automatique et differentielle :
+- detection rapide des dossiers de dates ;
+- indexation des journees nouvelles ou modifiees ;
+- indexation detaillee de la journee selectionnee ;
+- aucune limite fixe de nombre de videos ;
+- liste virtualisee ;
+- une seule video active en memoire, avec petit prechargement.
+
+Verification des fichiers connus : taille + date de modification. Empreinte rapide si changement ou doute.
+
+Pas de surveillance temps reel en V1. Une action Actualiser suffit afin d'eviter d'indexer un fichier encore en cours d'ecriture.
+
+Anomalies controlees :
+- video sans JSON ;
+- JSON sans video ;
+- fichier absent, deplace, renomme ou modifie ;
+- doublon ;
+- video illisible ;
+- station incoherente ;
+- date incoherente ;
+- schema JSON non pris en charge ;
+- partie manquante ou dupliquee ;
+- FPS, resolution, images ou duree incoherents ;
+- calibration absente ;
+- conflit de raccourci.
+
+Une petite difference entre duree theorique et duree JSON n'est pas bloquante. Les tolerances seront ajustees a partir de videos reelles.
+
+======================================================================
+25. PARAMETRES GENERAUX
+======================================================================
+
+Niveaux de parametrage :
+- general a l'installation ;
+- propre a la station ;
+- etat automatique de session.
+
+Categories de la fenetre :
+- General ;
+- Interface ;
+- Lecture video ;
+- Depouillement ;
+- Especes et raccourcis ;
+- Operateurs ;
+- Calibrations ;
+- Extractions ;
+- Exports ;
+- Sauvegardes ;
+- Performances ;
+- Journaux et diagnostic.
+
+Valeurs par defaut principales :
+- langue : francais ;
+- derniere station : rouverte ;
+- derniere journee et derniere image : restaurees ;
+- lecture au demarrage : pause ;
+- fenetre : maximisee ;
+- theme : systeme ;
+- vitesse : derniere vitesse, sinon x1 ;
+- prechargement : automatique ;
+- tampon : automatique, maximum 512 Mo ;
+- enchainement des evenements : oui ;
+- validation rapide : oui ;
+- reprise apres observation : oui ;
+- confiance : certaine ;
+- sens : aucun preslectionne ;
+- incertaine => A revoir : oui ;
+- mesure : facultative ;
+- copie des JSON : oui ;
+- reutilisation d'une extraction existante : oui ;
+- indexation : automatique et differentielle ;
+- logs : niveau normal.
+
+Parametres fixes non configurables :
+- convention de sens -1/0/+1 ;
+- observation liee a une image ;
+- image par image limitee au fichier ;
+- copie complete de l'evenement pour la video ;
+- aucun reencodage ;
+- conservation du fuseau horaire ;
+- conservation du ratio applique ;
+- archivage plutot que suppression ;
+- source traitee en lecture seule.
+
+======================================================================
+26. OPERATEURS
+======================================================================
+
+Un operateur comprend :
+- code court ;
+- nom affiche ;
+- actif/archive.
+
+Pas de mot de passe, compte reseau ou permissions en V1.
+
+Si plusieurs operateurs sont actifs, le Reader demande l'operateur au debut de la session et peut memoriser le dernier sur le poste.
+
+======================================================================
+27. JOURNAUX ET DIAGNOSTIC
+======================================================================
+
+Niveaux :
+- erreurs ;
+- normal ;
+- detaille ;
+- diagnostic.
+
+Defaut : normal.
+
+Rotation conseillee : dix fichiers de 5 Mo maximum.
+
+Contenu :
+- ouverture station ;
+- indexation ;
+- anomalies ;
+- erreurs de decodage ;
+- migrations ;
+- sauvegardes ;
+- extractions ;
+- erreurs non gerees.
+
+Les journaux ne contiennent ni images ni contenu complet de la base.
+
+======================================================================
+28. DECOUPAGE DES VERSIONS
+======================================================================
+
+V0.1 - Station, indexation et lecture
+- ouverture du dossier station ;
+- reconnaissance ;
+- detection des journees ;
+- lecture JSON ;
+- indexation ;
+- base SQLite ;
+- lecture PyAV/FFmpeg ;
+- enchainement fluide ;
+- vitesses ;
+- clavier ;
+- image par image ;
+- reprise.
+
+V0.2 - Depouillement
+- fenetre d'identification ;
+- especes et SANDRE ;
+- raccourcis ;
+- sens -1/0/+1 ;
+- validation rapide ;
+- confiance/commentaire/a revoir ;
+- dernieres observations ;
+- totaux ;
+- Ctrl + Z.
+
+V0.3 - Mesures et medias
+- calibrations Proche/Intermediaire/Loin ;
+- deux points et multipoint ;
+- snapshots ;
+- copie complete des sequences et JSON ;
+- correction des mesures.
+
+V0.4 - Consultation et exports
+- table des passages ;
+- filtres temporels et scientifiques ;
+- corrections ;
+- historique ;
+- CSV ;
+- controles ;
+- sauvegardes avancees.
+
+V1.0
+- installateur Windows ;
+- paquet Debian ;
+- tests sur grandes journees ;
+- reprise apres arret force ;
+- migrations automatiques SQLite ;
+- documentation utilisateur ;
+- robustesse et diagnostic.
+
+======================================================================
+29. DECISIONS STABILISEES
+======================================================================
+
+1. Un dossier ouvert correspond a une station.
+2. La station est reconnue depuis les JSON.
+3. L'operateur choisit une journee.
+4. Python, PySide6, PyAV/FFmpeg et SQLite sont retenus.
+5. La base est locale dans les donnees applicatives, pas dans les sources.
+6. Une base correspond a une station.
+7. Les videos sont referencees par chemins relatifs au dossier source.
+8. Le Reader distingue evenements et parties physiques.
+9. Les parties et evenements sont enchaines sans pause.
+10. Le fichier suivant est precharge.
+11. Le son est desactive.
+12. La vitesse va de x0,5 a x10 par pas de 0,5.
+13. L'image par image ne traverse pas les fichiers.
+14. Haut/bas change de fichier physique.
+15. Une action d'identification arrete immediatement la lecture.
+16. L'image affichee au declenchement est la reference de l'observation.
+17. Le sens est uniquement -1, 0 ou +1.
+18. Le sens visuel n'est pas enregistre.
+19. Les especes sont configurables et disposent d'un code court de trois lettres.
+20. Le code SANDRE est prevu.
+21. La saisie rapide espece puis sens est prevue.
+22. La mesure utilise deux points ou une polyligne.
+23. Trois calibrations sont prevues : Proche, Intermediaire, Loin.
+24. Tous les points, pixels, ratios et centimetres sont conserves.
+25. Les snapshots sont possibles.
+26. L'extraction video copie l'evenement complet sans conversion.
+27. Les medias sont ranges par station, type et code espece, sans date.
+28. La table Passages permet de rechercher et modifier les observations anciennes.
+29. Les recherches acceptent une periode date/heure precise.
+30. Une barre superieure donne acces aux stations, passages, calibrations, exports et parametres.
+31. Les observations sont annulees logiquement.
+32. L'export CSV contient les millisecondes et le fuseau horaire.
+33. L'indexation n'impose aucune limite fixe de fichiers.
+34. La V1 est locale et mono-operateur en utilisation simultanee.
+35. Les sauvegardes et migrations de structure sont prevues des le depart.
+
+======================================================================
+30. PROCHAINE ETAPE
+======================================================================
+
+Definir l'arborescence du projet Python, les responsabilites de chaque package et module, les dependances, les conventions de nommage, les tests et l'ordre d'implementation.
+
+Ensuite, commencer le code par le socle V0.1 :
+- configuration des chemins applicatifs multiplateformes ;
+- modele SQLite et migrations ;
+- lecture/validation des JSON ;
+- indexation d'une station et d'une journee ;
+- modele evenement/partie ;
+- premier lecteur PyAV ;
+- interface principale minimale ;
+- enchainement et prechargement.
