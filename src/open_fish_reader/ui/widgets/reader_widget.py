@@ -15,6 +15,7 @@ from .video_widget import VideoWidget
 class ReaderWidget(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         self.station_label = QLabel("Station : -")
         self.day_label = QLabel("Journée : -")
@@ -71,9 +72,9 @@ class ReaderWidget(QWidget):
         layout.addWidget(self.video_widget, stretch=1)
         layout.addLayout(controls_layout)
 
-        self.set_navigation_enabled(False, False)
+        self.set_file_navigation_enabled(False, False)
 
-    def set_navigation_enabled(
+    def set_file_navigation_enabled(
         self,
         has_previous_file: bool,
         has_next_file: bool,
@@ -81,9 +82,23 @@ class ReaderWidget(QWidget):
         self.previous_file_button.setEnabled(has_previous_file)
         self.next_file_button.setEnabled(has_next_file)
 
-    def set_loading(self, loading: bool) -> None:
-        self.previous_file_button.setEnabled(self.previous_file_button.isEnabled() and not loading)
-        self.next_file_button.setEnabled(self.next_file_button.isEnabled() and not loading)
+    def set_frame_navigation_enabled(
+        self,
+        has_previous_frame: bool,
+        has_next_frame: bool,
+    ) -> None:
+        self.previous_frame_button.setEnabled(has_previous_frame)
+        self.next_frame_button.setEnabled(has_next_frame)
+
+    def set_navigation_enabled(
+        self,
+        has_previous_file: bool,
+        has_next_file: bool,
+    ) -> None:
+        self.set_file_navigation_enabled(
+            has_previous_file,
+            has_next_file,
+        )
 
     def clear_video_information(self) -> None:
         self.file_label.setText("Fichier : -")
@@ -92,3 +107,4 @@ class ReaderWidget(QWidget):
         self.frame_label.setText("Image : -")
         self.timestamp_label.setText("Horodatage : -")
         self.video_widget.clear()
+        self.set_frame_navigation_enabled(False, False)

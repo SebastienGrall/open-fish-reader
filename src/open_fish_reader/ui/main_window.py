@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Slot
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtCore import Qt, QThread, Slot
+from PySide6.QtGui import QCloseEvent, QKeyEvent
 from PySide6.QtWidgets import QFileDialog, QMainWindow, QMessageBox, QToolBar
 
 from ..core.exceptions import OpenFishReaderError
@@ -16,7 +16,7 @@ from .dialogs.day_selection_dialog import DaySelectionDialog
 from .dialogs.indexing_progress_dialog import IndexingProgressDialog
 from .widgets.reader_widget import ReaderWidget
 from .workers.day_indexing_worker import DayIndexingWorker
-from .workers.first_frame_worker import FirstFrameWorker
+from .workers.frame_sequence_worker import FrameSequenceWorker
 
 
 class MainWindow(QMainWindow):
@@ -26,13 +26,14 @@ class MainWindow(QMainWindow):
         self._opened_station: OpenedStation | None = None
         self._station_service = StationService()
         self._playback_queue_service = PlaybackQueueService()
+        self._decoded_frames: list[DecodedFrame] = []
+        self._current_frame_index = -1
 
         self._indexing_thread: QThread | None = None
         self._indexing_worker: DayIndexingWorker | None = None
         self._progress_dialog: IndexingProgressDialog | None = None
 
         self._frame_thread: QThread | None = None
-        self._frame_worker: FirstFrameWorker | None = None
 
         self._current_day_folder: Path | None = None
         self._video_parts: list[IndexedVideoPart] = []
@@ -45,6 +46,8 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.reader_widget)
         self.reader_widget.previous_file_button.clicked.connect(self._open_previous_file)
         self.reader_widget.next_file_button.clicked.connect(self._open_next_file)
+        self.reader_widget.previous_frame_button.clicked.connect(self._show_previous_frame)
+        self.reader_widget.next_frame_button.clicked.connect(self._show_next_frame)
 
         toolbar = QToolBar("Principal", self)
         toolbar.setMovable(False)
@@ -248,11 +251,15 @@ class MainWindow(QMainWindow):
         self.reader_widget.set_navigation_enabled(False, False)
         self.statusBar().showMessage(f"Décodage de {part.video_path.name}...")
 
+        self._decoded_frames = []
+        self._current_frame_index = -1
+        self.reader_widget.set_frame_navigation_enabled(False, False)
+
         self._frame_thread = QThread(self)
-        self._frame_worker = FirstFrameWorker(part)
+        self._frame_worker = FrameSequenceWorker(part)
         self._frame_worker.moveToThread(self._frame_thread)
         self._frame_thread.started.connect(self._frame_worker.run)
-        self._frame_worker.completed.connect(self._first_frame_ready)
+        self._frame_worker.completed.connect(self._frame_sequence_ready)
         self._frame_worker.failed.connect(self._first_frame_failed)
         self._frame_worker.finished.connect(self._frame_thread.quit)
         self._frame_worker.finished.connect(self._frame_worker.deleteLater)
@@ -260,23 +267,53 @@ class MainWindow(QMainWindow):
         self._frame_thread.start()
 
     @Slot(object)
-    def _first_frame_ready(
+    def _frame_sequence_ready(
         self,
-        frame: DecodedFrame,
+        frames: list[DecodedFrame],
     ) -> None:
-        if self._current_part_index < 0 or self._current_part_index >= len(self._video_parts):
+        self._decoded_frames = frames
+        self._current_frame_index = 0
+        self._display_current_frame()
+
+    def _show_previous_frame(self) -> None:
+        if self._current_frame_index <= 0:
+            return
+        self._current_frame_index -= 1
+        self._display_current_frame()
+
+    def _show_next_frame(self) -> None:
+        if self._current_frame_index + 1 >= len(self._decoded_frames):
+            return
+        self._current_frame_index += 1
+        self._display_current_frame()
+
+    def _display_current_frame(self) -> None:
+        if (
+            self._current_frame_index < 0
+            or self._current_frame_index >= len(self._decoded_frames)
+            or self._current_part_index < 0
+            or self._current_part_index >= len(self._video_parts)
+        ):
             return
 
+        frame = self._decoded_frames[self._current_frame_index]
         part = self._video_parts[self._current_part_index]
+        timestamp = frame.absolute_timestamp.isoformat(timespec="milliseconds")
 
         self.reader_widget.video_widget.set_image(frame.image)
         self.reader_widget.frame_label.setText(
-            f"Image : {frame.frame_number + 1}/{part.frame_count}"
+            f"Image : {self._current_frame_index + 1}/{len(self._decoded_frames)}"
         )
-
-        timestamp = frame.absolute_timestamp.isoformat(timespec="milliseconds")
         self.reader_widget.timestamp_label.setText(f"Horodatage : {timestamp}")
-        self.statusBar().showMessage(f"Première image chargée : {part.video_path.name}")
+        self.reader_widget.set_frame_navigation_enabled(
+            has_previous_frame=self._current_frame_index > 0,
+            has_next_frame=(self._current_frame_index + 1 < len(self._decoded_frames)),
+        )
+        self.statusBar().showMessage(
+            f"{part.video_path.name} - "
+            f"image {self._current_frame_index + 1}/"
+            f"{len(self._decoded_frames)}"
+        )
 
     @Slot(str)
     def _first_frame_failed(
@@ -286,6 +323,9 @@ class MainWindow(QMainWindow):
         self.reader_widget.video_widget.clear()
         self.reader_widget.frame_label.setText("Image : erreur")
         self.reader_widget.timestamp_label.setText("Horodatage : -")
+        self._decoded_frames = []
+        self._current_frame_index = -1
+        self.reader_widget.set_frame_navigation_enabled(False, False)
         QMessageBox.critical(
             self,
             "Erreur vidéo",
@@ -344,3 +384,22 @@ class MainWindow(QMainWindow):
         self._stop_frame_worker()
         self._close_opened_station()
         super().closeEvent(event)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.key() == Qt.Key.Key_Left:
+            self._show_previous_frame()
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_Right:
+            self._show_next_frame()
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_Up:
+            self._open_previous_file()
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_Down:
+            self._open_next_file()
+            event.accept()
+            return
+        super().keyPressEvent(event)
