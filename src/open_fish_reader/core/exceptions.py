@@ -1,5 +1,5 @@
 class OpenFishReaderError(Exception):
-    pass
+    """Erreur de base du logiciel."""
 
 
 class InvalidStationFolderError(OpenFishReaderError):
@@ -12,3 +12,7 @@ class InvalidVideoPartJsonError(OpenFishReaderError):
 
 class UnsupportedJsonSchemaError(OpenFishReaderError):
     pass
+
+
+class IgnoredJsonRecordError(OpenFishReaderError):
+    """Le JSON est valide, mais ne décrit pas une partie vidéo."""
