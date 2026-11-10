@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -15,18 +15,22 @@ from PySide6.QtWidgets import (
 from ..core.exceptions import OpenFishReaderError
 from ..services.station_service import OpenedStation, StationService
 from ..version import APP_NAME, APP_VERSION
+from .dialogs.day_selection_dialog import DaySelectionDialog
+from .dialogs.indexing_progress_dialog import IndexingProgressDialog
+from .workers.day_indexing_worker import DayIndexingWorker
 
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-
         self._opened_station: OpenedStation | None = None
         self._station_service = StationService()
+        self._indexing_thread: QThread | None = None
+        self._indexing_worker: DayIndexingWorker | None = None
+        self._progress_dialog: IndexingProgressDialog | None = None
 
         self.setWindowTitle(f"{APP_NAME} - {APP_VERSION}")
         self.resize(1200, 800)
-
         self.label = QLabel(
             "Open Fish Reader\n\nOuvrez le dossier d'une station.",
             alignment=Qt.AlignmentFlag.AlignCenter,
@@ -36,66 +40,131 @@ class MainWindow(QMainWindow):
         toolbar = QToolBar("Principal", self)
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
-
-        toolbar.addAction(
-            "Ouvrir une station",
-            self.open_station,
-        )
+        toolbar.addAction("Ouvrir une station", self.open_station)
+        self.day_action = toolbar.addAction("Choisir une journée", self.choose_day)
+        self.day_action.setEnabled(False)
         toolbar.addSeparator()
-        toolbar.addAction(
-            "Quitter",
-            self.close,
-        )
-
+        toolbar.addAction("Quitter", self.close)
         self.statusBar().showMessage("Prêt")
 
     def open_station(self) -> None:
-        selected_folder = QFileDialog.getExistingDirectory(
-            self,
-            "Ouvrir le dossier d'une station",
-        )
-
+        selected_folder = QFileDialog.getExistingDirectory(self, "Ouvrir le dossier d'une station")
         if not selected_folder:
             return
 
-        self.statusBar().showMessage("Indexation de la station en cours...")
-
         try:
             opened_station = self._station_service.open_station(Path(selected_folder))
-
         except (OpenFishReaderError, OSError, ValueError) as error:
-            QMessageBox.critical(
-                self,
-                "Station invalide",
-                str(error),
-            )
-            self.statusBar().showMessage("Échec de l'ouverture")
+            QMessageBox.critical(self, "Station invalide", str(error))
             return
 
         self._close_opened_station()
         self._opened_station = opened_station
-
-        self.label.setText(
-            f"Station : {opened_station.station.name}\n"
-            f"Dossier : {opened_station.station.source_folder}\n\n"
-            f"Journées détectées : "
-            f"{opened_station.detected_day_count}\n\n"
-            "Base SQLite :\n"
-            f"{opened_station.database_path}\n\n"
-            "La station est prête.\n"
-            "La prochaine étape sera la sélection "
-            "et l'indexation d'une journée."
-        )
-
+        self.day_action.setEnabled(True)
+        self._show_station_summary()
         self.statusBar().showMessage(f"Station ouverte : {opened_station.station.name}")
+        self.choose_day()
 
-    def _close_opened_station(self) -> None:
+    def choose_day(self) -> None:
         if self._opened_station is None:
             return
 
-        self._opened_station.connection.close()
-        self._opened_station = None
+        rows = self._opened_station.connection.execute(
+            "SELECT day_date, event_count, video_part_count FROM days ORDER BY day_date"
+        ).fetchall()
+        indexed_days = {
+            str(row["day_date"]): (int(row["event_count"]), int(row["video_part_count"]))
+            for row in rows
+        }
+        dialog = DaySelectionDialog(
+            self._opened_station.day_folders,
+            indexed_days,
+            self,
+        )
+        dialog.day_selected.connect(self._start_day_indexing)
+        dialog.exec()
+
+    def _start_day_indexing(self, day_folder: Path) -> None:
+        if self._opened_station is None or self._indexing_thread is not None:
+            return
+
+        self._progress_dialog = IndexingProgressDialog(self)
+        self._indexing_thread = QThread(self)
+        self._indexing_worker = DayIndexingWorker(
+            database_path=self._opened_station.database_path,
+            station_folder=self._opened_station.station.source_folder,
+            day_folder=day_folder,
+        )
+        self._indexing_worker.moveToThread(self._indexing_thread)
+        self._indexing_thread.started.connect(self._indexing_worker.run)
+        self._indexing_worker.progress.connect(self._progress_dialog.update_progress)
+        self._indexing_worker.completed.connect(
+            lambda events, parts, duration: self._day_indexed(day_folder, events, parts, duration)
+        )
+        self._indexing_worker.failed.connect(self._indexing_failed)
+        self._indexing_worker.cancelled.connect(self._indexing_cancelled)
+        self._indexing_worker.finished.connect(self._indexing_thread.quit)
+        self._indexing_worker.finished.connect(self._indexing_worker.deleteLater)
+        self._indexing_thread.finished.connect(self._indexing_finished)
+        self._progress_dialog.cancel_button.clicked.connect(self._indexing_worker.cancel)
+        self._progress_dialog.show()
+        self._indexing_thread.start()
+
+    def _day_indexed(
+        self,
+        day_folder: Path,
+        event_count: int,
+        part_count: int,
+        duration_ms: int,
+    ) -> None:
+        duration_seconds = duration_ms / 1000
+        self.label.setText(
+            f"Journée : {day_folder.name}\n\n"
+            f"Événements : {event_count}\n"
+            f"Parties vidéo : {part_count}\n"
+            f"Durée vidéo totale : {duration_seconds:.3f} s\n\n"
+            "La journée est indexée dans SQLite."
+        )
+        self.statusBar().showMessage(f"Journée indexée : {day_folder.name}")
+
+    def _indexing_failed(self, message: str) -> None:
+        QMessageBox.critical(self, "Erreur d'indexation", message)
+        self.statusBar().showMessage("Échec de l'indexation")
+
+    def _indexing_cancelled(self) -> None:
+        self.statusBar().showMessage("Indexation annulée")
+
+    def _indexing_finished(self) -> None:
+        if self._progress_dialog is not None:
+            self._progress_dialog.close()
+            self._progress_dialog = None
+        if self._indexing_thread is not None:
+            self._indexing_thread.deleteLater()
+        self._indexing_thread = None
+        self._indexing_worker = None
+
+    def _show_station_summary(self) -> None:
+        if self._opened_station is None:
+            return
+        opened = self._opened_station
+        self.label.setText(
+            f"Station : {opened.station.name}\n"
+            f"Dossier : {opened.station.source_folder}\n\n"
+            f"Journées détectées : {opened.detected_day_count}\n\n"
+            "Base SQLite :\n"
+            f"{opened.database_path}"
+        )
+
+    def _close_opened_station(self) -> None:
+        if self._opened_station is not None:
+            self._opened_station.connection.close()
+            self._opened_station = None
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if self._indexing_worker is not None:
+            self._indexing_worker.cancel()
+        if self._indexing_thread is not None:
+            self._indexing_thread.quit()
+            self._indexing_thread.wait(3000)
         self._close_opened_station()
         super().closeEvent(event)
