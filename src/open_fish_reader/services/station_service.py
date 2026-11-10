@@ -72,6 +72,14 @@ class StationService:
                         "%Y-%m-%d",
                     ).date()
 
+                    existing_day = day_repository.get_by_date(
+                        station_id,
+                        day_date,
+                    )
+
+                    if existing_day is not None:
+                        continue
+
                     day_repository.upsert(
                         station_id=station_id,
                         day_date=day_date,

@@ -57,7 +57,10 @@ def test_day_indexing_service(tmp_path: Path) -> None:
         lambda: False,
     )
 
-    assert result == (1, 1, 661)
+    assert result.event_count == 1
+    assert result.part_count == 1
+    assert result.duration_ms == 661
+    assert result.skipped is False
     assert progress
     verify = open_database(database_path)
     assert verify.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 1

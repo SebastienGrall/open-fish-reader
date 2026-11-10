@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 
 
 class DaySelectionDialog(QDialog):
-    day_selected = Signal(Path)
+    day_selected = Signal(Path, bool)
 
     def __init__(
         self,
@@ -28,53 +28,42 @@ class DaySelectionDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Choisir une journée")
         self.resize(620, 480)
-
         title = QLabel("Sélectionnez la journée à dépouiller")
         title.setStyleSheet("font-size: 16px; font-weight: 600;")
-
         self.days_list = QListWidget()
-        for day_folder in sorted(day_folders, reverse=True):
-            event_count, part_count = indexed_days.get(day_folder.name, (0, 0))
-            if event_count or part_count:
-                status = f"Indexée : {event_count} événements, {part_count} parties"
-            else:
-                status = "Non indexée"
-            display_date = datetime.strptime(day_folder.name, "%Y-%m-%d").strftime("%d/%m/%Y")
-            item = QListWidgetItem(f"{display_date}    {status}")
-            item.setData(Qt.ItemDataRole.UserRole, str(day_folder))
+        for folder in sorted(day_folders, reverse=True):
+            events, parts = indexed_days.get(folder.name, (0, 0))
+            status = (
+                f"Indexée : {events} événements, {parts} parties"
+                if events or parts
+                else "Non indexée"
+            )
+            date_text = datetime.strptime(folder.name, "%Y-%m-%d").strftime("%d/%m/%Y")
+            item = QListWidgetItem(f"{date_text}    {status}")
+            item.setData(Qt.ItemDataRole.UserRole, str(folder))
             self.days_list.addItem(item)
-
-        self.open_button = QPushButton("Ouvrir la journée")
-        self.open_button.setDefault(True)
-        self.open_button.setEnabled(self.days_list.currentItem() is not None)
+        open_button = QPushButton("Ouvrir la journée")
         refresh_button = QPushButton("Réindexer")
-        cancel_button = QPushButton("Fermer")
-
-        self.days_list.currentItemChanged.connect(
-            lambda current, _previous: self.open_button.setEnabled(current is not None)
-        )
-        self.days_list.itemDoubleClicked.connect(lambda _item: self._accept_selection())
-        self.open_button.clicked.connect(self._accept_selection)
-        refresh_button.clicked.connect(self._accept_selection)
-        cancel_button.clicked.connect(self.reject)
-
+        close_button = QPushButton("Fermer")
+        open_button.clicked.connect(lambda: self._select(False))
+        refresh_button.clicked.connect(lambda: self._select(True))
+        close_button.clicked.connect(self.reject)
+        self.days_list.itemDoubleClicked.connect(lambda _item: self._select(False))
         buttons = QHBoxLayout()
         buttons.addStretch()
         buttons.addWidget(refresh_button)
-        buttons.addWidget(self.open_button)
-        buttons.addWidget(cancel_button)
-
+        buttons.addWidget(open_button)
+        buttons.addWidget(close_button)
         layout = QVBoxLayout(self)
         layout.addWidget(title)
         layout.addWidget(self.days_list)
         layout.addLayout(buttons)
-
         if self.days_list.count():
             self.days_list.setCurrentRow(0)
 
-    def _accept_selection(self) -> None:
+    def _select(self, force: bool) -> None:
         item = self.days_list.currentItem()
         if item is None:
             return
-        self.day_selected.emit(Path(item.data(Qt.ItemDataRole.UserRole)))
+        self.day_selected.emit(Path(item.data(Qt.ItemDataRole.UserRole)), force)
         self.accept()

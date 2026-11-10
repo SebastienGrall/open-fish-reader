@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date, datetime
 from pathlib import Path
 
 from open_fish_reader.database.connection import open_database
@@ -41,7 +42,7 @@ def test_index_station_data_into_sqlite(tmp_path: Path) -> None:
 
     database_path = tmp_path / "test.sqlite"
     connection = open_database(database_path)
-    now = __import__("datetime").datetime.now().astimezone()
+    now = datetime.now().astimezone()
     create_initial_schema(connection, APP_VERSION, now.isoformat(timespec="milliseconds"))
 
     station = scan_station_identity(station_folder)
@@ -50,7 +51,7 @@ def test_index_station_data_into_sqlite(tmp_path: Path) -> None:
         station_id = StationRepository(connection).upsert(station, now)
         day_id = DayRepository(connection).upsert(
             station_id,
-            now.date(),
+            date(2026, 11, 8),
             Path("2026-11-08"),
             1,
             1,
@@ -59,7 +60,7 @@ def test_index_station_data_into_sqlite(tmp_path: Path) -> None:
             metadata["video_end_time"],
             now,
         )
-        EventRepository(connection).replace_day_events(
+        EventRepository(connection).synchronize_day_events(
             day_id,
             station_folder,
             events,
