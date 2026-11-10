@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .speed_control import SpeedControl
 from .video_widget import VideoWidget
 
 
@@ -50,6 +51,7 @@ class ReaderWidget(QWidget):
 
         self.previous_file_button = QPushButton("Fichier précédent")
         self.play_pause_button = QPushButton("Lecture")
+        self.speed_control = SpeedControl()
         self.next_file_button = QPushButton("Fichier suivant")
         self.previous_frame_button = QPushButton("Image précédente")
         self.next_frame_button = QPushButton("Image suivante")
@@ -63,6 +65,7 @@ class ReaderWidget(QWidget):
         controls_layout.addWidget(self.previous_frame_button)
         controls_layout.addStretch()
         controls_layout.addWidget(self.play_pause_button)
+        controls_layout.addWidget(self.speed_control)
         controls_layout.addStretch()
         controls_layout.addWidget(self.next_frame_button)
         controls_layout.addWidget(self.next_file_button)
