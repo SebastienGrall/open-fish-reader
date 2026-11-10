@@ -23,8 +23,7 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
 
         self.label = QLabel(
-            "Open Fish Reader\n\n"
-            "Ouvrez le dossier d'une station.",
+            "Open Fish Reader\n\nOuvrez le dossier d'une station.",
             alignment=Qt.AlignmentFlag.AlignCenter,
         )
         self.setCentralWidget(self.label)
@@ -74,6 +73,4 @@ class MainWindow(QMainWindow):
             "Le socle fonctionne correctement."
         )
 
-        self.statusBar().showMessage(
-            f"Station ouverte : {station.name}"
-        )
+        self.statusBar().showMessage(f"Station ouverte : {station.name}")

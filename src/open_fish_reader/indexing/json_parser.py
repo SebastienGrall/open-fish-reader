@@ -12,14 +12,10 @@ def load_json_file(path: Path) -> dict[str, Any]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        raise InvalidVideoPartJsonError(
-            f"JSON illisible : {path.name}"
-        ) from error
+        raise InvalidVideoPartJsonError(f"JSON illisible : {path.name}") from error
 
     if not isinstance(data, dict):
-        raise InvalidVideoPartJsonError(
-            f"Le JSON doit contenir un objet : {path.name}"
-        )
+        raise InvalidVideoPartJsonError(f"Le JSON doit contenir un objet : {path.name}")
 
     return data
 
@@ -43,14 +39,10 @@ def parse_iso_datetime(value: str) -> datetime:
     try:
         parsed_value = datetime.fromisoformat(value)
     except (TypeError, ValueError) as error:
-        raise InvalidVideoPartJsonError(
-            f"Horodatage ISO 8601 invalide : {value}"
-        ) from error
+        raise InvalidVideoPartJsonError(f"Horodatage ISO 8601 invalide : {value}") from error
 
     if parsed_value.tzinfo is None:
-        raise InvalidVideoPartJsonError(
-            f"L'horodatage ne contient pas de fuseau horaire : {value}"
-        )
+        raise InvalidVideoPartJsonError(f"L'horodatage ne contient pas de fuseau horaire : {value}")
 
     return parsed_value
 
@@ -59,17 +51,12 @@ def parse_video_part_json(path: Path) -> VideoPart:
     data = load_json_file(path)
     validate_video_part_data(data)
 
-    video_start_time = parse_iso_datetime(
-        data["video_start_time"]
-    )
-    video_end_time = parse_iso_datetime(
-        data["video_end_time"]
-    )
+    video_start_time = parse_iso_datetime(data["video_start_time"])
+    video_end_time = parse_iso_datetime(data["video_end_time"])
 
     if video_end_time < video_start_time:
         raise InvalidVideoPartJsonError(
-            f"video_end_time est antérieur à video_start_time "
-            f"dans {path.name}"
+            f"video_end_time est antérieur à video_start_time dans {path.name}"
         )
 
     return VideoPart(
@@ -79,12 +66,8 @@ def parse_video_part_json(path: Path) -> VideoPart:
         station_name=data["station_name"],
         video_file=data["video_file"],
         part_number=data["part_number"],
-        event_start_time=parse_iso_datetime(
-            data["event_start_time"]
-        ),
-        event_detection_time=parse_iso_datetime(
-            data["event_detection_time"]
-        ),
+        event_start_time=parse_iso_datetime(data["event_start_time"]),
+        event_detection_time=parse_iso_datetime(data["event_detection_time"]),
         video_start_time=video_start_time,
         video_end_time=video_end_time,
         frame_count=data["frame_count"],
