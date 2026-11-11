@@ -20,7 +20,6 @@ class PlaybackController(QObject):
         self._timer = QTimer(self)
         self._timer.setTimerType(self._timer.timerType().PreciseTimer)
         self._timer.timeout.connect(self._advance)
-
         self._frame_count = 0
         self._current_index = -1
         self._fps = 20.0
