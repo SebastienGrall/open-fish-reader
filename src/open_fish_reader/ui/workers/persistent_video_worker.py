@@ -113,9 +113,11 @@ class PersistentVideoWorker(QObject):
         except (av.error.FFmpegError, OSError, IndexError, RuntimeError) as error:
             self.failed.emit(str(error))
         finally:
-            self._close_file()
-            self.stopped.emit()
-            self.finished.emit()
+            try:
+                self._close_file()
+            finally:
+                self.stopped.emit()
+                self.finished.emit()
 
     @Slot(int)
     def request_frame(self, frame_index: int) -> None:
