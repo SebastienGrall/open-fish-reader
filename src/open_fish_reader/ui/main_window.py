@@ -41,6 +41,7 @@ class MainWindow(QMainWindow):
         self._persistent_worker: PersistentVideoWorker | None = None
         self._persistent_mode = False
         self._persistent_buffer_ready = False
+        self._persistent_total_frames = 0
         self._persistent_waiting_for_frame = False
         self._persistent_resume_after_frame = False
 
@@ -244,6 +245,7 @@ class MainWindow(QMainWindow):
         self._current_frame_index = -1
         self._persistent_mode = False
         self._persistent_buffer_ready = False
+        self._persistent_total_frames = 0
         self._persistent_waiting_for_frame = False
         self._persistent_resume_after_frame = False
 
@@ -288,12 +290,16 @@ class MainWindow(QMainWindow):
         self._persistent_worker.opened.connect(self._persistent_opened)
         self._persistent_worker.frame_ready.connect(self._persistent_frame_ready)
         self._persistent_worker.buffer_changed.connect(self._persistent_buffer_changed)
+        self._persistent_worker.stream_ended.connect(self._persistent_stream_ended)
         self._persistent_worker.failed.connect(self._first_frame_failed)
-        self._persistent_worker.finished.connect(self._persistent_thread.quit)
-        self._persistent_worker.finished.connect(self._persistent_worker.deleteLater)
-        self._persistent_thread.finished.connect(
-            lambda thread=self._persistent_thread: self._persistent_finished(thread)
+        self._persistent_worker.finished.connect(
+            self._persistent_thread.quit,
+            Qt.ConnectionType.DirectConnection,
         )
+
+        self._persistent_thread.finished.connect(self._persistent_worker.deleteLater)
+
+        self._persistent_thread.finished.connect(self._persistent_finished)
         self._persistent_thread.start()
 
     @Slot(object)
@@ -348,16 +354,6 @@ class MainWindow(QMainWindow):
             self._persistent_resume_after_frame = self._playback.is_playing
             if self._persistent_resume_after_frame:
                 self._playback.pause()
-
-            indices = worker.buffer.indices()
-
-            print(
-                f"[UI] Image demandée : {self._current_frame_index} | "
-                f"Lecture : {self._playback.is_playing} | "
-                f"En attente : {self._persistent_waiting_for_frame} | "
-                f"Image présente : {worker.buffer.contains(self._current_frame_index)} | "
-                f"Buffer : {indices}"
-            )
             worker.request_frame(self._current_frame_index)
             return
 
@@ -431,25 +427,28 @@ class MainWindow(QMainWindow):
     @Slot()
     def _playback_sequence_finished(self) -> None:
         next_index = self._current_part_index + 1
+
         if next_index >= len(self._video_parts):
             self._pending_auto_play = False
+
+            self.reader_widget.play_pause_button.setText("Lecture")
+
+            self.reader_widget.set_frame_navigation_enabled(
+                has_previous_frame=(self._current_frame_index > 0),
+                has_next_frame=False,
+            )
+
             self.statusBar().showMessage("Fin de la journée")
             return
+
         self._pending_auto_play = True
         self._open_part(next_index)
 
     @Slot(int, float)
     def _persistent_opened(self, frame_count: int, fps: float) -> None:
-        self.statusBar().showMessage(
-            f"Flux vidéo ouvert : {frame_count} images à {fps:.2f} FPS. Décodage..."
-        )
-
-        self._playback.load_sequence(
-            frame_count=frame_count,
-            fps=fps,
-        )
+        self._persistent_total_frames = frame_count
+        self._playback.load_sequence(frame_count=frame_count, fps=fps)
         self.reader_widget.play_pause_button.setEnabled(False)
-
         if self._persistent_worker is not None:
             self._persistent_worker.set_playback_speed(self._playback.speed)
             self._persistent_worker.set_playing(False)
@@ -461,14 +460,9 @@ class MainWindow(QMainWindow):
         frame_index: int,
         frame: DecodedFrame,
     ) -> None:
-        print(
-            f"[UI] frame_ready reçu : {frame_index} | "
-            f"Image attendue : {self._current_frame_index} | "
-            f"En attente : {self._persistent_waiting_for_frame}"
-        )
         if not self._persistent_mode or frame_index != self._current_frame_index:
             return
-        self.statusBar().showMessage(f"Première image reçue : {frame_index}")
+
         resume_playback = self._persistent_resume_after_frame
         self._persistent_waiting_for_frame = False
         self._persistent_resume_after_frame = False
@@ -480,8 +474,7 @@ class MainWindow(QMainWindow):
         self.reader_widget.play_pause_button.setEnabled(
             self._persistent_buffer_ready and self._frame_count() > 1
         )
-        if resume_playback or self._pending_auto_play:
-            self._pending_auto_play = False
+        if resume_playback:
             self._playback.play()
 
     @Slot(int, int, int)
@@ -494,11 +487,18 @@ class MainWindow(QMainWindow):
         if self._persistent_buffer_ready or self._current_part_index < 0:
             return
 
-        # On attend seulement les 5 premières images.
         buffered_count = last_index - first_index + 1
-        required_frames = min(5, self._frame_count())
+        part = self._video_parts[self._current_part_index]
 
-        # Le tampon doit contenir le début de la vidéo.
+        if self._pending_auto_play:
+            required_seconds = 0.75
+        else:
+            required_seconds = 1.5
+
+        required_frames = min(
+            self._frame_count(),
+            max(5, round(part.recording_fps * required_seconds)),
+        )
         if first_index != 0 or buffered_count < required_frames:
             return
 
@@ -506,25 +506,35 @@ class MainWindow(QMainWindow):
         self.reader_widget.play_pause_button.setEnabled(self._frame_count() > 1)
         self.statusBar().showMessage(f"Tampon vidéo prêt : {buffered_count} images")
 
-    @Slot()
-    def _persistent_finished(self, finished_thread=None) -> None:
-        if finished_thread is None:
+        # Un changement automatique de fichier attend un vrai tampon, pas
+        # seulement la première image, afin de conserver la fluidité.
+        if self._pending_auto_play:
+            self._pending_auto_play = False
+            self._playback.play()
+
+    @Slot(int)
+    def _persistent_stream_ended(
+        self,
+        actual_frame_count: int,
+    ) -> None:
+        if not self._persistent_mode or actual_frame_count <= 0:
             return
 
-        # Ne nettoyer les références actives que si c'est bien
-        # le thread actuellement utilisé.
-        if finished_thread is self._persistent_thread:
-            self._persistent_worker = None
-            self._persistent_thread = None
-            self._persistent_mode = False
-            self._update_file_navigation()
+        self._persistent_total_frames = actual_frame_count
 
-        # Supprimer uniquement le thread qui vient de se terminer.
-        finished_thread.deleteLater()
+        self._playback.set_frame_count(actual_frame_count)
+        self._persistent_waiting_for_frame = False
+        self._persistent_resume_after_frame = False
+
+        self.statusBar().showMessage(f"Fin réelle du flux détectée : {actual_frame_count} images")
+
+    @Slot()
+    def _persistent_finished(self) -> None:
+        self._update_file_navigation()
 
     def _frame_count(self) -> int:
-        if self._persistent_mode and 0 <= self._current_part_index < len(self._video_parts):
-            return self._video_parts[self._current_part_index].frame_count
+        if self._persistent_mode:
+            return self._persistent_total_frames
         return len(self._decoded_frames)
 
     def _stop_persistent_worker(self) -> bool:
@@ -535,25 +545,36 @@ class MainWindow(QMainWindow):
             self._persistent_mode = False
             return True
 
+        self._playback.pause()
+
         if worker is not None:
+            # stop() ne réalise aucun décodage.
+            # Il positionne un threading.Event thread-safe.
             worker.stop()
 
-        if thread is not None and not thread.wait(5000):
-            print("[MainWindow] Le worker ne s'est pas arrêté après 5 s")
-
+        if thread is not None:
+            # Enregistre également une demande de sortie
+            # de la boucle événementielle du QThread.
             thread.requestInterruption()
             thread.quit()
 
-            if not thread.wait(2000):
-                print("[MainWindow] ERREUR : le worker tourne toujours !")
+            if not thread.wait(5000):
+                self.statusBar().showMessage("Le décodeur vidéo ne s'est pas arrêté.")
                 return False
 
-        # Ne nettoyer que les références correspondant à ce thread.
-        if self._persistent_thread is thread:
+            thread.deleteLater()
+
+        if self._persistent_worker is worker:
             self._persistent_worker = None
+
+        if self._persistent_thread is thread:
             self._persistent_thread = None
 
         self._persistent_mode = False
+        self._persistent_buffer_ready = False
+        self._persistent_waiting_for_frame = False
+        self._persistent_resume_after_frame = False
+
         return True
 
     def _stop_frame_worker(self) -> None:

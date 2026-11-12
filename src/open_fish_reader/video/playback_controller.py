@@ -53,6 +53,15 @@ class PlaybackController(QObject):
         self._current_index = min(max(0, initial_index), self._frame_count - 1)
         self.frame_changed.emit(self._current_index)
 
+    def set_frame_count(self, frame_count: int) -> None:
+        """Ajuste la longueur lorsque PyAV atteint la fin réelle du flux."""
+        self._frame_count = max(0, frame_count)
+        if self._frame_count == 0:
+            self.pause()
+            self._current_index = -1
+            return
+        self._current_index = min(self._current_index, self._frame_count - 1)
+
     def set_current_index(self, index: int) -> None:
         if self._playing or self._frame_count == 0:
             return
