@@ -237,7 +237,11 @@ class MainWindow(QMainWindow):
         self._playback.pause()
 
         if not self._stop_persistent_worker():
-            print("[MainWindow] Impossible d'ouvrir la vidéo suivante : worker encore actif")
+            QMessageBox.warning(
+                self,
+                "Lecteur vidéo occupé",
+                "Le fichier vidéo précédent ne peut pas encore être fermé.",
+            )
             return
         self._current_part_index = index
         part = self._video_parts[index]
@@ -248,6 +252,7 @@ class MainWindow(QMainWindow):
         self._persistent_total_frames = 0
         self._persistent_waiting_for_frame = False
         self._persistent_resume_after_frame = False
+        self._persistent_requested_frame_index = None
 
         self.reader_widget.file_label.setText(f"Fichier : {part.video_path.name}")
         self.reader_widget.event_label.setText(f"Événement : {part.source_event_id}")
@@ -323,12 +328,16 @@ class MainWindow(QMainWindow):
             self._playback.play()
 
     def _show_previous_frame(self) -> None:
-        if not self._playback.is_playing:
-            self._playback.set_current_index(self._current_frame_index - 1)
+        if self._playback.is_playing or self._persistent_waiting_for_frame:
+            return
+
+        self._playback.set_current_index(self._current_frame_index - 1)
 
     def _show_next_frame(self) -> None:
-        if not self._playback.is_playing:
-            self._playback.set_current_index(self._current_frame_index + 1)
+        if self._playback.is_playing or self._persistent_waiting_for_frame:
+            return
+
+        self._playback.set_current_index(self._current_frame_index + 1)
 
     @Slot(int)
     def _playback_frame_changed(self, index: int) -> None:
@@ -339,27 +348,50 @@ class MainWindow(QMainWindow):
         if self._current_frame_index < 0:
             return
 
-        if self._persistent_mode:
-            worker = self._persistent_worker
-            if worker is None or self._persistent_waiting_for_frame:
+        if not self._persistent_mode:
+            if self._current_frame_index >= len(self._decoded_frames):
                 return
 
-            cached = worker.buffer.get(self._current_frame_index)
-            if cached is not None:
-                self._show_decoded_frame(cached)
-                worker.set_displayed_index(self._current_frame_index)
-                return
-
-            self._persistent_waiting_for_frame = True
-            self._persistent_resume_after_frame = self._playback.is_playing
-            if self._persistent_resume_after_frame:
-                self._playback.pause()
-            worker.request_frame(self._current_frame_index)
+            frame = self._decoded_frames[self._current_frame_index]
+            self._show_decoded_frame(frame)
             return
 
-        if self._current_frame_index >= len(self._decoded_frames):
+        worker = self._persistent_worker
+
+        if worker is None:
             return
-        self._show_decoded_frame(self._decoded_frames[self._current_frame_index])
+
+        # Une seule demande distante peut être active.
+        if self._persistent_waiting_for_frame:
+            return
+
+        cached_frame = worker.buffer.get(self._current_frame_index)
+
+        if cached_frame is not None:
+            self._show_decoded_frame(cached_frame)
+            worker.set_displayed_index(self._current_frame_index)
+            return
+
+        requested_index = self._current_frame_index
+
+        self._persistent_waiting_for_frame = True
+        self._persistent_requested_frame_index = requested_index
+        self._persistent_resume_after_frame = self._playback.is_playing
+
+        # Empêcher un second déplacement logique pendant
+        # le seek.
+        self.reader_widget.set_frame_navigation_enabled(
+            False,
+            False,
+        )
+        self.reader_widget.play_pause_button.setEnabled(False)
+
+        if self._playback.is_playing:
+            self._playback.pause()
+
+        self.statusBar().showMessage(f"Chargement de l'image {requested_index + 1}...")
+
+        worker.request_frame(requested_index)
 
     def _show_decoded_frame(self, frame: DecodedFrame) -> None:
         if self._current_part_index < 0 or self._current_part_index >= len(self._video_parts):
@@ -390,6 +422,7 @@ class MainWindow(QMainWindow):
         self._persistent_resume_after_frame = False
         self.reader_widget.set_frame_navigation_enabled(False, False)
         self.reader_widget.play_pause_button.setEnabled(False)
+        self._persistent_requested_frame_index = None
         QMessageBox.critical(self, "Erreur vidéo", message)
         self.statusBar().showMessage("Échec du décodage vidéo")
 
@@ -460,20 +493,44 @@ class MainWindow(QMainWindow):
         frame_index: int,
         frame: DecodedFrame,
     ) -> None:
-        if not self._persistent_mode or frame_index != self._current_frame_index:
+        if not self._persistent_mode:
+            return
+
+        requested_index = self._persistent_requested_frame_index
+
+        # Une réponse obsolète ne doit pas libérer une
+        # autre demande, mais une réponse attendue doit
+        # toujours déverrouiller l'interface.
+        if requested_index is not None and frame_index != requested_index:
             return
 
         resume_playback = self._persistent_resume_after_frame
+
         self._persistent_waiting_for_frame = False
+        self._persistent_requested_frame_index = None
         self._persistent_resume_after_frame = False
+
+        # La position logique devient celle réellement
+        # reçue après le seek.
+        self._current_frame_index = frame_index
+        self._playback.set_current_index(frame_index)
+
         self._show_decoded_frame(frame)
 
-        if self._persistent_worker is not None:
-            self._persistent_worker.set_displayed_index(frame_index)
+        worker = self._persistent_worker
+
+        if worker is not None:
+            worker.set_displayed_index(frame_index)
 
         self.reader_widget.play_pause_button.setEnabled(
             self._persistent_buffer_ready and self._frame_count() > 1
         )
+
+        self.reader_widget.set_frame_navigation_enabled(
+            has_previous_frame=(frame_index > 0),
+            has_next_frame=(frame_index + 1 < self._frame_count()),
+        )
+
         if resume_playback:
             self._playback.play()
 
@@ -574,6 +631,7 @@ class MainWindow(QMainWindow):
         self._persistent_buffer_ready = False
         self._persistent_waiting_for_frame = False
         self._persistent_resume_after_frame = False
+        self._persistent_requested_frame_index = None
 
         return True
 
@@ -620,7 +678,9 @@ class MainWindow(QMainWindow):
             event.accept()
             return
         if event.key() == Qt.Key.Key_Space:
-            self._playback.toggle()
+            if not self._persistent_waiting_for_frame:
+                self._playback.toggle()
+
             event.accept()
             return
         if event.key() in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
