@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Slot
 from PySide6.QtGui import QCloseEvent, QKeyEvent
-from PySide6.QtWidgets import QFileDialog, QMainWindow, QMessageBox, QToolBar
+from PySide6.QtWidgets import QFileDialog, QMainWindow, QMessageBox, QSplitter, QToolBar
 
 from ..core.exceptions import OpenFishReaderError
 from ..domain.indexed_video_part import IndexedVideoPart
@@ -17,6 +17,7 @@ from ..video.playback_controller import PlaybackController
 from .dialogs.day_selection_dialog import DaySelectionDialog
 from .dialogs.indexing_progress_dialog import IndexingProgressDialog
 from .widgets.reader_widget import ReaderWidget
+from .widgets.video_part_panel import VideoPartPanel
 from .workers.day_indexing_worker import DayIndexingWorker
 from .workers.frame_sequence_worker import FrameSequenceWorker
 from .workers.persistent_video_worker import PersistentVideoWorker
@@ -54,7 +55,17 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
 
         self.reader_widget = ReaderWidget()
-        self.setCentralWidget(self.reader_widget)
+        self.video_part_panel = VideoPartPanel()
+        self.video_part_panel.open_requested.connect(self._open_part_from_panel)
+
+        self.reader_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.reader_splitter.setChildrenCollapsible(False)
+        self.reader_splitter.addWidget(self.video_part_panel)
+        self.reader_splitter.addWidget(self.reader_widget)
+        self.reader_splitter.setStretchFactor(0, 0)
+        self.reader_splitter.setStretchFactor(1, 1)
+        self.reader_splitter.setSizes([270, 930])
+        self.setCentralWidget(self.reader_splitter)
         self._playback = PlaybackController(self)
         self._playback.frame_changed.connect(self._playback_frame_changed)
         self._playback.playing_changed.connect(self._playback_state_changed)
@@ -177,6 +188,7 @@ class MainWindow(QMainWindow):
             self._opened_station.station.source_folder,
             day_folder.name,
         )
+        self.video_part_panel.set_parts(self._video_parts)
         self._current_part_index = -1
         state = (
             "Journée inchangée, index SQLite réutilisé."
@@ -244,6 +256,8 @@ class MainWindow(QMainWindow):
             )
             return
         self._current_part_index = index
+        self.video_part_panel.set_current_row(index)
+        self.video_part_panel.mark_in_progress(index)
         part = self._video_parts[index]
         self._decoded_frames = []
         self._current_frame_index = -1
@@ -425,6 +439,11 @@ class MainWindow(QMainWindow):
         self._persistent_requested_frame_index = None
         QMessageBox.critical(self, "Erreur vidéo", message)
         self.statusBar().showMessage("Échec du décodage vidéo")
+        if self._current_part_index >= 0:
+            self.video_part_panel.mark_error(
+                self._current_part_index,
+                message,
+            )
 
     @Slot()
     def _frame_worker_finished(self) -> None:
@@ -460,6 +479,9 @@ class MainWindow(QMainWindow):
     @Slot()
     def _playback_sequence_finished(self) -> None:
         next_index = self._current_part_index + 1
+
+        if self._current_part_index >= 0:
+            self.video_part_panel.mark_read(self._current_part_index)
 
         if next_index >= len(self._video_parts):
             self._pending_auto_play = False
@@ -692,3 +714,30 @@ class MainWindow(QMainWindow):
             event.accept()
             return
         super().keyPressEvent(event)
+
+    @Slot()
+    def _playback_sequence_finished(self) -> None:
+        next_index = self._current_part_index + 1
+
+        if next_index >= len(self._video_parts):
+            self._pending_auto_play = False
+
+            self.reader_widget.play_pause_button.setText("Lecture")
+            self.reader_widget.play_pause_button.setEnabled(False)
+
+            self.reader_widget.set_frame_navigation_enabled(
+                has_previous_frame=(self._current_frame_index > 0),
+                has_next_frame=False,
+            )
+
+            self.statusBar().showMessage("Fin de la journée")
+            return
+
+        self._pending_auto_play = True
+        self._open_part(next_index)
+
+    def _open_part_from_panel(self, index: int) -> None:
+        if index == self._current_part_index:
+            return
+        self._pending_auto_play = False
+        self._open_part(index)
