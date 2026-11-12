@@ -10,6 +10,7 @@ from ..core.exceptions import OpenFishReaderError
 from ..domain.indexed_video_part import IndexedVideoPart
 from ..services.playback_queue_service import PlaybackQueueService
 from ..services.station_service import OpenedStation, StationService
+from ..services.video_part_status_service import VideoPartStatusService
 from ..version import APP_NAME, APP_VERSION
 from ..video.cache_policy import decide_full_cache
 from ..video.frame import DecodedFrame
@@ -80,6 +81,8 @@ class MainWindow(QMainWindow):
         self.reader_widget.next_file_button.clicked.connect(self._open_next_file)
         self.reader_widget.previous_frame_button.clicked.connect(self._show_previous_frame)
         self.reader_widget.next_frame_button.clicked.connect(self._show_next_frame)
+        self._video_part_status_service = VideoPartStatusService()
+        self._requested_initial_frame = 0
 
         toolbar = QToolBar("Principal", self)
         toolbar.setMovable(False)
@@ -231,13 +234,19 @@ class MainWindow(QMainWindow):
     def _open_previous_file(self) -> None:
         if self._current_part_index <= 0:
             return
+
         self._pending_auto_play = self._playback.is_playing
+        self._requested_initial_frame = 0
+
         self._open_part(self._current_part_index - 1)
 
     def _open_next_file(self) -> None:
         if self._current_part_index + 1 >= len(self._video_parts):
             return
+
         self._pending_auto_play = self._playback.is_playing
+        self._requested_initial_frame = 0
+
         self._open_part(self._current_part_index + 1)
 
     def _open_part(self, index: int) -> None:
@@ -245,6 +254,10 @@ class MainWindow(QMainWindow):
             return
         if index < 0 or index >= len(self._video_parts):
             return
+
+        # Sauvegarde de l'ancien fichier avant de
+        # changer _current_part_index.
+        self._save_current_video_position()
 
         self._playback.pause()
 
@@ -259,6 +272,21 @@ class MainWindow(QMainWindow):
         self.video_part_panel.set_current_row(index)
         self.video_part_panel.mark_in_progress(index)
         part = self._video_parts[index]
+        if self._opened_station is not None:
+            self._video_part_status_service.mark_opened(
+                self._opened_station.database_path,
+                part.id,
+            )
+
+        self.video_part_panel.mark_in_progress(index)
+        self.video_part_panel.set_current_row(index)
+
+        video_part_id = self._current_video_part_id()
+        if self._opened_station is not None and video_part_id is not None:
+            self._video_part_status_service.mark_opened(
+                self._opened_station.database_path,
+                video_part_id,
+            )
         self._decoded_frames = []
         self._current_frame_index = -1
         self._persistent_mode = False
@@ -331,11 +359,19 @@ class MainWindow(QMainWindow):
         part = self._video_parts[self._current_part_index]
         self._decoded_frames = frames
         self._current_frame_index = -1
+
+        initial_index = min(
+            self._requested_initial_frame,
+            len(frames) - 1,
+        )
+
         self._playback.load_sequence(
             frame_count=len(frames),
             fps=part.recording_fps,
-            initial_index=0,
+            initial_index=initial_index,
         )
+
+        self._requested_initial_frame = 0
         self.reader_widget.play_pause_button.setEnabled(len(frames) > 1)
         if self._pending_auto_play:
             self._pending_auto_play = False
@@ -425,25 +461,50 @@ class MainWindow(QMainWindow):
         )
 
     @Slot(str)
-    def _first_frame_failed(self, message: str) -> None:
+    def _first_frame_failed(
+        self,
+        message: str,
+    ) -> None:
         self._playback.pause()
+
+        failed_part_index = self._current_part_index
+        video_part_id = self._current_video_part_id()
+
+        self._persistent_waiting_for_frame = False
+        self._persistent_requested_frame_index = None
+        self._persistent_resume_after_frame = False
+
         self.reader_widget.video_widget.clear()
         self.reader_widget.frame_label.setText("Image : erreur")
         self.reader_widget.timestamp_label.setText("Horodatage : -")
-        self._decoded_frames = []
-        self._current_frame_index = -1
-        self._persistent_waiting_for_frame = False
-        self._persistent_resume_after_frame = False
-        self.reader_widget.set_frame_navigation_enabled(False, False)
+        self.reader_widget.set_frame_navigation_enabled(
+            False,
+            False,
+        )
         self.reader_widget.play_pause_button.setEnabled(False)
-        self._persistent_requested_frame_index = None
-        QMessageBox.critical(self, "Erreur vidéo", message)
-        self.statusBar().showMessage("Échec du décodage vidéo")
-        if self._current_part_index >= 0:
-            self.video_part_panel.mark_error(
-                self._current_part_index,
+
+        if self._opened_station is not None and video_part_id is not None:
+            self._video_part_status_service.mark_error(
+                self._opened_station.database_path,
+                video_part_id,
                 message,
             )
+
+        if failed_part_index >= 0:
+            self.video_part_panel.mark_error(
+                failed_part_index,
+                message,
+            )
+
+        self._decoded_frames = []
+        self._current_frame_index = -1
+
+        QMessageBox.critical(
+            self,
+            "Erreur vidéo",
+            message,
+        )
+        self.statusBar().showMessage("Échec du décodage vidéo")
 
     @Slot()
     def _frame_worker_finished(self) -> None:
@@ -497,17 +558,39 @@ class MainWindow(QMainWindow):
             return
 
         self._pending_auto_play = True
+
+        video_part_id = self._current_video_part_id()
+        if self._opened_station is not None and video_part_id is not None:
+            self._video_part_status_service.mark_completed(
+                self._opened_station.database_path,
+                video_part_id,
+                self._current_frame_index,
+            )
+        self.video_part_panel.mark_read(self._current_part_index)
+        self._requested_initial_frame = 0
+        self._pending_auto_play = True
+        self._open_part(next_index)
         self._open_part(next_index)
 
     @Slot(int, float)
     def _persistent_opened(self, frame_count: int, fps: float) -> None:
         self._persistent_total_frames = frame_count
-        self._playback.load_sequence(frame_count=frame_count, fps=fps)
+        initial_index = min(
+            self._requested_initial_frame,
+            frame_count - 1,
+        )
+
+        self._playback.load_sequence(
+            frame_count=frame_count,
+            fps=fps,
+            initial_index=initial_index,
+        )
         self.reader_widget.play_pause_button.setEnabled(False)
         if self._persistent_worker is not None:
             self._persistent_worker.set_playback_speed(self._playback.speed)
             self._persistent_worker.set_playing(False)
-            self._persistent_worker.request_frame(0)
+            self._persistent_worker.request_frame(initial_index)
+        self._requested_initial_frame = 0
 
     @Slot(int, object)
     def _persistent_frame_ready(
@@ -672,6 +755,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self._playback.pause()
+        self._save_current_video_position()
         if self._indexing_worker is not None:
             self._indexing_worker.cancel()
         if self._indexing_thread is not None:
@@ -716,28 +800,73 @@ class MainWindow(QMainWindow):
         super().keyPressEvent(event)
 
     @Slot()
-    def _playback_sequence_finished(self) -> None:
-        next_index = self._current_part_index + 1
+    def _playback_sequence_finished(
+        self,
+    ) -> None:
+        current_part_index = self._current_part_index
+        video_part_id = self._current_video_part_id()
+
+        if self._opened_station is not None and video_part_id is not None:
+            self._video_part_status_service.mark_completed(
+                self._opened_station.database_path,
+                video_part_id,
+                self._current_frame_index,
+            )
+
+        if current_part_index >= 0:
+            self.video_part_panel.mark_read(current_part_index)
+
+        next_index = current_part_index + 1
 
         if next_index >= len(self._video_parts):
             self._pending_auto_play = False
 
             self.reader_widget.play_pause_button.setText("Lecture")
             self.reader_widget.play_pause_button.setEnabled(False)
-
             self.reader_widget.set_frame_navigation_enabled(
                 has_previous_frame=(self._current_frame_index > 0),
                 has_next_frame=False,
             )
-
             self.statusBar().showMessage("Fin de la journée")
             return
 
         self._pending_auto_play = True
         self._open_part(next_index)
 
-    def _open_part_from_panel(self, index: int) -> None:
-        if index == self._current_part_index:
+    def _open_part_from_panel(
+        self,
+        index: int,
+    ) -> None:
+        if not (0 <= index < len(self._video_parts)):
             return
+
+        part = self._video_parts[index]
+
         self._pending_auto_play = False
+        self._requested_initial_frame = (
+            part.last_viewed_frame if part.last_viewed_frame is not None else 0
+        )
+
         self._open_part(index)
+
+    def _current_video_part_id(self) -> int | None:
+        if not 0 <= self._current_part_index < len(self._video_parts):
+            return None
+        return self._video_parts[self._current_part_index].id
+
+    def _save_current_video_position(
+        self,
+    ) -> None:
+        if self._opened_station is None or self._current_frame_index < 0:
+            return
+
+        video_part_id = self._current_video_part_id()
+
+        if video_part_id is None:
+            return
+
+        self._video_part_status_service.update_position(
+            self._opened_station.database_path,
+            video_part_id,
+            self._current_frame_index,
+        )

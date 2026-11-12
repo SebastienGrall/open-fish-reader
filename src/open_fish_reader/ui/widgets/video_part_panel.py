@@ -56,7 +56,11 @@ class VideoPartPanel(QWidget):
 
     def mark_in_progress(self, row: int) -> None:
         item = self.model.item_at(row)
-        if item is None or item.status in (VideoPartStatus.ERROR, VideoPartStatus.OBSERVED):
+        if item is None or item.status in (
+            VideoPartStatus.ERROR,
+            VideoPartStatus.OBSERVED,
+            VideoPartStatus.READ,
+        ):
             return
         self.model.update_status(row, VideoPartStatus.IN_PROGRESS)
 

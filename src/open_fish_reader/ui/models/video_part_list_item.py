@@ -17,6 +17,15 @@ class VideoPartStatus(StrEnum):
     ERROR = "error"
 
 
+def parse_video_part_status(
+    value: str,
+) -> VideoPartStatus:
+    try:
+        return VideoPartStatus(value)
+    except ValueError:
+        return VideoPartStatus.UNREAD
+
+
 @dataclass(frozen=True, slots=True)
 class VideoPartListItem:
     video_part_id: int
@@ -40,7 +49,19 @@ class VideoPartListItem:
             0,
             round((part.video_end_time - part.video_start_time).total_seconds() * 1000),
         )
-        status = VideoPartStatus.UNREAD if part.video_path.is_file() else VideoPartStatus.ERROR
+
+        if not part.video_path.is_file():
+            status = VideoPartStatus.ERROR
+            error_message = part.error_message or "Fichier vidéo introuvable"
+        else:
+            status = parse_video_part_status(part.review_status)
+            error_message = part.error_message
+
+        # Toute observation validée est prioritaire
+        # sur les statuts de simple lecture.
+        if part.observation_count > 0 and status is not VideoPartStatus.ERROR:
+            status = VideoPartStatus.OBSERVED
+
         return cls(
             video_part_id=part.id,
             event_id=part.event_id,
@@ -51,7 +72,6 @@ class VideoPartListItem:
             duration_ms=duration_ms,
             frame_count=part.frame_count,
             status=status,
-            error_message=(
-                None if status is VideoPartStatus.UNREAD else "Fichier vidéo introuvable"
-            ),
+            observation_count=(part.observation_count),
+            error_message=error_message,
         )

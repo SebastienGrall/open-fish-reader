@@ -48,18 +48,50 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE TABLE IF NOT EXISTS video_parts (
     id INTEGER PRIMARY KEY,
-    event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE RESTRICT,
-    part_number INTEGER NOT NULL CHECK (part_number >= 1),
-    video_relative_path TEXT NOT NULL, json_relative_path TEXT NOT NULL,
-    video_file_name TEXT NOT NULL, json_file_name TEXT NOT NULL,
-    json_schema_version INTEGER NOT NULL, record_type TEXT NOT NULL,
-    video_start_time TEXT NOT NULL, video_end_time TEXT NOT NULL,
-    declared_frame_count INTEGER NOT NULL CHECK (declared_frame_count >= 0),
-    declared_fps REAL NOT NULL CHECK (declared_fps > 0),
-    frame_width INTEGER NOT NULL CHECK (frame_width > 0),
-    frame_height INTEGER NOT NULL CHECK (frame_height > 0),
-    file_size INTEGER, file_modified_at TEXT,
-    media_status TEXT NOT NULL DEFAULT 'available', indexed_at TEXT NOT NULL,
+    event_id INTEGER NOT NULL
+        REFERENCES events(id)
+        ON DELETE RESTRICT,
+    part_number INTEGER NOT NULL
+        CHECK (part_number >= 1),
+
+    video_relative_path TEXT NOT NULL,
+    json_relative_path TEXT NOT NULL,
+    video_file_name TEXT NOT NULL,
+    json_file_name TEXT NOT NULL,
+
+    json_schema_version INTEGER NOT NULL,
+    record_type TEXT NOT NULL,
+
+    video_start_time TEXT NOT NULL,
+    video_end_time TEXT NOT NULL,
+
+    declared_frame_count INTEGER NOT NULL
+        CHECK (declared_frame_count >= 0),
+    declared_fps REAL NOT NULL
+        CHECK (declared_fps > 0),
+
+    frame_width INTEGER NOT NULL
+        CHECK (frame_width > 0),
+    frame_height INTEGER NOT NULL
+        CHECK (frame_height > 0),
+
+    file_size INTEGER,
+    file_modified_at TEXT,
+    media_status TEXT NOT NULL
+        DEFAULT 'available',
+    indexed_at TEXT NOT NULL,
+
+    review_status TEXT NOT NULL
+        DEFAULT 'unread',
+    first_opened_at TEXT,
+    last_opened_at TEXT,
+    last_viewed_frame INTEGER,
+    completed_at TEXT,
+    observation_count INTEGER NOT NULL
+        DEFAULT 0
+        CHECK (observation_count >= 0),
+    error_message TEXT,
+
     UNIQUE(event_id, part_number)
 );
 CREATE INDEX IF NOT EXISTS idx_days_station_date ON days(station_id, day_date);

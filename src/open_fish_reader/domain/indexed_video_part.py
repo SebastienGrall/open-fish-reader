@@ -18,3 +18,7 @@ class IndexedVideoPart:
     recording_fps: float
     frame_width: int
     frame_height: int
+    review_status: str = "unread"
+    observation_count: int = 0
+    error_message: str | None = None
+    last_viewed_frame: int | None = None

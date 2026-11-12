@@ -25,7 +25,11 @@ class VideoPartRepository:
                 video_parts.declared_frame_count,
                 video_parts.declared_fps,
                 video_parts.frame_width,
-                video_parts.frame_height
+                video_parts.frame_height,
+                video_parts.review_status,
+                video_parts.observation_count,
+                video_parts.error_message,
+                video_parts.last_viewed_frame
             FROM video_parts
             JOIN events ON events.id = video_parts.event_id
             JOIN days ON days.id = events.day_id
@@ -48,6 +52,14 @@ class VideoPartRepository:
                 recording_fps=float(row["declared_fps"]),
                 frame_width=int(row["frame_width"]),
                 frame_height=int(row["frame_height"]),
+                review_status=str(row["review_status"] or "unread"),
+                observation_count=int(row["observation_count"] or 0),
+                error_message=(
+                    str(row["error_message"]) if row["error_message"] is not None else None
+                ),
+                last_viewed_frame=(
+                    int(row["last_viewed_frame"]) if row["last_viewed_frame"] is not None else None
+                ),
             )
             for row in rows
         ]
