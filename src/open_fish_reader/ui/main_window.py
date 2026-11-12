@@ -210,6 +210,22 @@ class MainWindow(QMainWindow):
                 "Aucune partie vidéo n'est disponible pour cette journée.",
             )
             return
+
+        if not self._video_parts:
+            self.reader_widget.clear_video_information()
+            self.video_part_panel.set_parts([])
+            self.reader_widget.set_navigation_enabled(
+                False,
+                False,
+            )
+
+            QMessageBox.information(
+                self,
+                "Journée vide",
+                "Aucune partie vidéo valide n'est disponible pour cette journée.",
+            )
+            return
+
         self._open_part(0)
 
     @Slot(str)

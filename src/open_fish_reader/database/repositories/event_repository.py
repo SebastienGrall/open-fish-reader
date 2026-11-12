@@ -73,13 +73,34 @@ class EventRepository:
             self._synchronize_parts(event_id, station_folder, event, now_iso)
 
         existing_rows = self.connection.execute(
-            "SELECT id FROM events WHERE day_id = ?", (day_id,)
+            """
+            SELECT id
+            FROM events
+            WHERE day_id = ?
+            """,
+            (day_id,),
         ).fetchall()
+
         for row in existing_rows:
             event_id = int(row["id"])
-            if event_id not in retained_event_ids:
-                self.connection.execute("DELETE FROM video_parts WHERE event_id = ?", (event_id,))
-                self.connection.execute("DELETE FROM events WHERE id = ?", (event_id,))
+
+            if event_id in retained_event_ids:
+                continue
+
+            self.connection.execute(
+                """
+                DELETE FROM video_parts
+                WHERE event_id = ?
+                """,
+                (event_id,),
+            )
+            self.connection.execute(
+                """
+                DELETE FROM events
+                WHERE id = ?
+                """,
+                (event_id,),
+            )
 
     def _synchronize_parts(
         self, event_id: int, station_folder: Path, event: Event, now_iso: str
