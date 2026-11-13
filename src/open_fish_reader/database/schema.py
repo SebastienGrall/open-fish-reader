@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 
 from ..core.constants import DATABASE_SCHEMA_VERSION
+from .catalog_schema import create_catalog_schema
 from .migrations import migrate_database
 
 SCHEMA = """
@@ -102,6 +103,7 @@ CREATE INDEX IF NOT EXISTS idx_video_parts_event_part ON video_parts(event_id, p
 
 def create_initial_schema(connection: sqlite3.Connection, app_version: str, now_iso: str) -> None:
     connection.executescript(SCHEMA)
+    create_catalog_schema(connection)
     connection.execute(
         """
         INSERT OR IGNORE INTO database_metadata (

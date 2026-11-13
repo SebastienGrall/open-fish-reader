@@ -48,11 +48,9 @@ def create_database(path: Path):
     return connection
 
 
-def test_migration_and_status_lifecycle(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(
-        "open_fish_reader.database.migrations.DATABASE_SCHEMA_VERSION",
-        3,
-    )
+def test_migration_and_status_lifecycle(
+    tmp_path: Path,
+) -> None:
     connection = create_database(tmp_path / "status.sqlite")
     migrate_database(connection)
     repository = VideoPartStatusRepository(connection)

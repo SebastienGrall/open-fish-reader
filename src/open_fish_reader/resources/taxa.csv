@@ -1,0 +1,82 @@
+tax_id;tax_code;stage_code;stage_label;common_name;sandre_code;scientific_name
+1;ABH;5;adulte;Able de Heckel;2117;Leucaspius delineatus
+2;ABL;5;adulte;Ablette;2090;Alburnus alburnus
+3;ALA;5;adulte;Grande alose;2056;Alosa alosa
+4;ALF;5;adulte;Alose feinte;26166;Alosa fallax
+5;ALR;5;adulte;Alose du Rhône;2058;Alosa fallax rhodanensis
+6;ALX;5;adulte;Alose;2055;Alosa
+8;AGJ;4;juvénile;Anguille jaune;2038;Anguilla anguilla
+9;AGG;5;adulte;Anguille argentée;2038;Anguilla anguilla
+10;BAF;5;adulte;Barbeau fluviatile;2096;Barbus barbus
+11;BBG;5;adulte;Black-bass à grande bouche;2053;Micropterus salmoides
+12;BLN;5;adulte;Blageon;2119;Telestes souffia
+13;BOU;5;adulte;Bouvière;2131;Rhodeus amarus
+14;BRB;5;adulte;Brème bordelière;2099;Blicca bjoerkna
+15;BRE;5;adulte;Brème;2086;Abramis brama
+16;BRO;5;adulte;Brochet;2151;Esox lucius
+17;CAA;5;adulte;Carassin doré;2101;Carassius auratus
+18;CAR;5;adulte;Carpe argentée;2115;Hypophthalmichthys molitrix
+19;CAS;5;adulte;Carassin;2102;Carassius carassius
+20;CCO;5;adulte;Carpe;2110;Cyprinus carpio
+21;CCU;5;adulte;Carpe cuir;2111;Cyprinus carpio carpio
+22;CHA;5;adulte;Chabot;2080;Cottus perifretum
+23;CHE;5;adulte;Chevaine;2120;Squalius cephalus
+24;CLA;5;adulte;Ecrevisse Clarkii;2028;Procambarus clarkii
+25;CMI;5;adulte;Carpe Miroir;2109;Cyprinus carpio carpio
+26;COR;5;adulte;Corégone;2076;Coregonus lavaretus
+27;CTI;5;adulte;Amour blanc;31039;Ctenopharyngodon idella
+28;CYP;5;adulte;Cyprinidé;2084;Cyprinidae
+29;EAS;5;adulte;Esturgeon (Acipenser sturio);2032;Acipenser sturio
+30;EPE;5;adulte;Eperlan;2188;Osmerus eperlanus
+31;EPI;5;adulte;Epinoche;2165;Gasterosteus aculeatus
+32;EPT;5;adulte;Epinochette;2167;Pungitius pungitius
+33;ERS;5;adulte;Crabe chinois;879;Eriocheir sinensis
+34;EST;5;adulte;Esturgeon (genre Acipenser);2031;Acipenser
+35;FLE;5;adulte;Flet;2203;Platichthys flesus
+36;GAM;5;adulte;Gambusie;2208;Gambusia affinis
+37;GAR;5;adulte;Gardon;2133;Rutilus rutilus
+38;GOU;5;adulte;Goujon;2113;Gobio gobio
+39;GRE;5;adulte;Grémille;2191;Gymnocephalus cernua
+40;HOT;5;adulte;Hotu;2104;Chondrostoma nasus
+41;KOI;5;adulte;Carpe Koi;2109;Cyprinus carpio carpio
+42;LAM;5;adulte;Lamproie petromyzontidaee;2009;Petromyzontidae
+43;LOF;5;adulte;Loche Franche;2071;Barbatula barbatula
+44;LOM;5;adulte;Bar moucheté;2235;Dicentrarchus punctatus
+45;LOT;5;adulte;Lote;2156;Lota lota
+46;LOU;5;adulte;Bar;2234;Dicentrarchus labrax
+47;LP;5;adulte;Lamproie lampretra;2010;Lampetra
+48;LPM;5;adulte;Lamproie marine;2014;Petromyzon marinus
+49;LPP;5;adulte;Lamproie de planer;2012;Lampetra planeri
+50;LPR;5;adulte;Lamproie fluviatile;2011;Lampetra fluviatilis
+51;MGL;5;adulte;Mulet à grosse lèvre;2180;Chelon labrosus
+52;MGR;5;adulte;Maigre;2231;Argyrosomus regius
+53;MUD;5;adulte;Mulet doré;2182;Liza aurata
+54;MUG;5;adulte;Mugilidae;2178;Mugilidae
+55;MUP;5;adulte;Mulet porc;2183;Liza ramada
+56;OBL;5;adulte;Omble chevalier;2226;Salvelinus alpinus
+57;OBR;5;adulte;Ombre commun;2247;Thymallus thymallus
+58;OCL;5;adulte;Ecrevisse Orconectes Limosus;871;Orconectes limosus
+59;PER;5;adulte;Perche;2193;Perca fluviatilis
+60;PES;5;adulte;Perche soleil;2050;Lepomis gibbosus
+61;PFL;5;adulte;Ecrevisse Pacifastacus;872;Pacifastacus leniusculus
+62;PLI;5;adulte;Pleuronectes platessa;2205;Pleuronectes platessa
+63;PSR;5;adulte;Pseudorasbora;2129;Pseudorasbora parva
+64;ROT;5;adulte;Rotengle;2135;Scardinius erithrophthalmus
+65;SAL;5;adulte;Genre Salmo;2219;Salmo
+66;SAN;5;adulte;Sandre;2195;Sander lucioperca
+67;SAP;5;adulte;Saumon rose;56870;Oncorhynchus gorbuscha
+68;SAT;5;adulte;Saumon atlantique;2220;Salmo salar
+69;SCH;5;adulte;Saumon chinook;2217;Oncorhynchus tshawytscha
+70;SCO;5;adulte;Saumon Coho;2218;Onchorynchus kisutch
+71;SDF;5;adulte;Omble fontaine;2227;Salvelinus fontinalis
+72;SIL;5;adulte;Silure;2238;Siluris glanis
+73;SPI;5;adulte;Spirlin;2088;Alburnoides bipunctatus
+74;TAC;5;adulte;Truite Arc en Ciel;2216;Onchorynchus mykiss
+75;TAN;5;adulte;Tanche;2137;Tinca tinca
+76;TOF;5;adulte;Tortue Floride;;Trachemys scripta elegans
+77;TRF;5;adulte;Truite fario;2221;Salmo trutta
+78;TRI;5;adulte;Triton;;Triton à préciser
+79;TRL;5;adulte;Truite de Lac;2222;Salmo trutta
+80;TRM;5;adulte;Truite de mer;2224;Salmo trutta
+81;VAI;5;adulte;Vairon;2125;Phoxinus phoxinus
+82;VAN;5;adulte;Vandoise;2122;Leuciscus leuciscus
