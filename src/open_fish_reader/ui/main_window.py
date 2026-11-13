@@ -17,6 +17,7 @@ from ..video.frame import DecodedFrame
 from ..video.playback_controller import PlaybackController
 from .dialogs.day_selection_dialog import DaySelectionDialog
 from .dialogs.indexing_progress_dialog import IndexingProgressDialog
+from .dialogs.taxon_configuration_dialog import TaxonConfigurationDialog
 from .widgets.reader_widget import ReaderWidget
 from .widgets.video_part_panel import VideoPartPanel
 from .workers.day_indexing_worker import DayIndexingWorker
@@ -91,7 +92,10 @@ class MainWindow(QMainWindow):
         self.day_action = toolbar.addAction("Choisir une journée", self.choose_day)
         self.day_action.setEnabled(False)
         toolbar.addSeparator()
+        toolbar.addAction("Configuration", self._open_taxon_configuration)
+        toolbar.addSeparator()
         toolbar.addAction("Quitter", self.close)
+
         self.statusBar().showMessage("Prêt")
 
     def open_station(self) -> None:
@@ -886,3 +890,18 @@ class MainWindow(QMainWindow):
             video_part_id,
             self._current_frame_index,
         )
+
+    def _open_taxon_configuration(self) -> None:
+        if self._opened_station is None:
+            QMessageBox.information(
+                self,
+                "Aucune station",
+                "Ouvrez d'abord une station pour configurer son catalogue.",
+            )
+            return
+
+        dialog = TaxonConfigurationDialog(
+            self._opened_station.database_path,
+            self,
+        )
+        dialog.exec()

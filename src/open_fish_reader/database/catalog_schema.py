@@ -7,17 +7,41 @@ CREATE TABLE IF NOT EXISTS taxa (
     id INTEGER PRIMARY KEY,
     taxon_uuid TEXT NOT NULL UNIQUE,
     source_tax_id INTEGER,
+
     tax_code TEXT NOT NULL UNIQUE,
+
     stage_code INTEGER NOT NULL,
     stage_label TEXT NOT NULL,
+
     common_name TEXT NOT NULL,
     sandre_code TEXT,
     scientific_name TEXT NOT NULL,
-    is_active INTEGER NOT NULL DEFAULT 0 CHECK (is_active IN (0, 1)),
+
+    is_active INTEGER NOT NULL
+        DEFAULT 0
+        CHECK (is_active IN (0, 1)),
+
     keyboard_shortcut TEXT,
-    display_order INTEGER NOT NULL DEFAULT 0,
+
+    display_order INTEGER NOT NULL
+        DEFAULT 0,
+
+    source_type TEXT NOT NULL
+        DEFAULT 'catalog'
+        CHECK (
+            source_type IN (
+                'catalog',
+                'custom'
+            )
+        ),
+
+    is_archived INTEGER NOT NULL
+        DEFAULT 0
+        CHECK (is_archived IN (0, 1)),
+
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
+
     UNIQUE(keyboard_shortcut)
 );
 

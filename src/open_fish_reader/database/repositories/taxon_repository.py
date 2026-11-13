@@ -41,10 +41,6 @@ class TaxonRepository:
                 common_name = excluded.common_name,
                 sandre_code = excluded.sandre_code,
                 scientific_name = excluded.scientific_name,
-                display_order = CASE
-                    WHEN taxa.display_order = 0 THEN excluded.display_order
-                    ELSE taxa.display_order
-                END,
                 updated_at = excluded.updated_at
             """,
             (
@@ -64,37 +60,53 @@ class TaxonRepository:
 
     def list_all(self) -> list[Taxon]:
         rows = self.connection.execute(
-            "SELECT * FROM taxa ORDER BY display_order, tax_code"
+            """
+            SELECT *
+            FROM taxa
+            WHERE is_archived = 0
+            ORDER BY display_order, tax_code
+            """
         ).fetchall()
+
         return [self._from_row(row) for row in rows]
 
     def list_active(self) -> list[Taxon]:
         rows = self.connection.execute(
             """
-            SELECT * FROM taxa
+            SELECT *
+            FROM taxa
             WHERE is_active = 1
+            AND is_archived = 0
             ORDER BY display_order, tax_code
             """
         ).fetchall()
+
         return [self._from_row(row) for row in rows]
 
-    def set_active(self, taxon_id: int, active: bool, now: datetime) -> None:
-        self.connection.execute(
-            "UPDATE taxa SET is_active = ?, updated_at = ? WHERE id = ?",
-            (int(active), now.isoformat(timespec="milliseconds"), taxon_id),
-        )
-
-    def set_shortcut(
+    def save_configuration(
         self,
-        taxon_id: int,
-        shortcut: str | None,
+        configuration: tuple[tuple[int, bool, int, str | None], ...],
         now: datetime,
     ) -> None:
-        normalized = shortcut.strip().upper() if shortcut else None
-        self.connection.execute(
-            "UPDATE taxa SET keyboard_shortcut = ?, updated_at = ? WHERE id = ?",
-            (normalized, now.isoformat(timespec="milliseconds"), taxon_id),
-        )
+        timestamp = now.isoformat(timespec="milliseconds")
+        shortcuts = [
+            shortcut
+            for _taxon_id, active, _order, shortcut in configuration
+            if active and shortcut is not None
+        ]
+        if len(shortcuts) != len(set(shortcuts)):
+            raise ValueError("Deux taxons actifs utilisent le même raccourci.")
+
+        for taxon_id, active, display_order, shortcut in configuration:
+            self.connection.execute(
+                """
+                UPDATE taxa
+                SET is_active = ?, display_order = ?, keyboard_shortcut = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (int(active), max(0, display_order), shortcut, timestamp, taxon_id),
+            )
 
     @staticmethod
     def _from_row(row: sqlite3.Row) -> Taxon:

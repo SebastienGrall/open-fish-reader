@@ -8,6 +8,7 @@ from ..core.constants import (
 from .catalog_schema import (
     create_catalog_schema,
 )
+from .migration_v5 import migrate_taxa_to_v5
 
 
 def migrate_database(
@@ -76,6 +77,10 @@ def migrate_database(
     if version < 4:
         create_catalog_schema(connection)
         version = 4
+
+    if version < 5:
+        migrate_taxa_to_v5(connection)
+        version = 5
 
     connection.execute(
         """
