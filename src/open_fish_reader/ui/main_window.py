@@ -4,11 +4,25 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Slot
 from PySide6.QtGui import QCloseEvent, QKeyEvent
-from PySide6.QtWidgets import QFileDialog, QMainWindow, QMessageBox, QSplitter, QToolBar
+from PySide6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QFileDialog,
+    QLineEdit,
+    QMainWindow,
+    QMessageBox,
+    QSpinBox,
+    QSplitter,
+    QTextEdit,
+    QToolBar,
+)
 
 from ..core.exceptions import OpenFishReaderError
 from ..domain.indexed_video_part import IndexedVideoPart
 from ..services.playback_queue_service import PlaybackQueueService
+from ..services.quick_observation_taxon_service import (
+    QuickObservationTaxonService,
+)
 from ..services.station_service import OpenedStation, StationService
 from ..services.video_part_status_service import VideoPartStatusService
 from ..version import APP_NAME, APP_VERSION
@@ -18,6 +32,10 @@ from ..video.playback_controller import PlaybackController
 from .dialogs.day_selection_dialog import DaySelectionDialog
 from .dialogs.indexing_progress_dialog import IndexingProgressDialog
 from .dialogs.taxon_configuration_dialog import TaxonConfigurationDialog
+from .widgets.quick_observation_panel import (
+    ObservationDraft,
+    QuickObservationPanel,
+)
 from .widgets.reader_widget import ReaderWidget
 from .widgets.video_part_panel import VideoPartPanel
 from .workers.day_indexing_worker import DayIndexingWorker
@@ -60,13 +78,19 @@ class MainWindow(QMainWindow):
         self.video_part_panel = VideoPartPanel()
         self.video_part_panel.open_requested.connect(self._open_part_from_panel)
 
+        self.quick_observation_taxon_service = QuickObservationTaxonService()
+        self.quick_observation_panel = QuickObservationPanel()
+        self.quick_observation_panel.draft_requested.connect(self._preview_observation_draft)
+
         self.reader_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.reader_splitter.setChildrenCollapsible(False)
         self.reader_splitter.addWidget(self.video_part_panel)
         self.reader_splitter.addWidget(self.reader_widget)
+        self.reader_splitter.addWidget(self.quick_observation_panel)
         self.reader_splitter.setStretchFactor(0, 0)
         self.reader_splitter.setStretchFactor(1, 1)
-        self.reader_splitter.setSizes([270, 930])
+        self.reader_splitter.setStretchFactor(2, 0)
+        self.reader_splitter.setSizes([250, 850, 310])
         self.setCentralWidget(self.reader_splitter)
         self._playback = PlaybackController(self)
         self._playback.frame_changed.connect(self._playback_frame_changed)
@@ -117,6 +141,7 @@ class MainWindow(QMainWindow):
         self._stop_frame_worker()
         self._close_opened_station()
         self._opened_station = opened_station
+        self._reload_quick_observation_taxa()
         self._video_parts = []
         self._current_part_index = -1
         self._current_day_folder = None
@@ -786,37 +811,80 @@ class MainWindow(QMainWindow):
         self._close_opened_station()
         super().closeEvent(event)
 
-    def keyPressEvent(self, event: QKeyEvent) -> None:
-        if event.key() == Qt.Key.Key_Left:
+    def keyPressEvent(
+        self,
+        event: QKeyEvent,
+    ) -> None:
+        focused_widget = self.focusWidget()
+
+        editing_field = isinstance(
+            focused_widget,
+            (
+                QLineEdit,
+                QTextEdit,
+                QSpinBox,
+                QComboBox,
+            ),
+        )
+
+        # Dans les champs de saisie, Qt doit conserver
+        # les lettres, chiffres, flèches et espace.
+        if editing_field:
+            super().keyPressEvent(event)
+            return
+
+        modifiers = event.modifiers()
+        key = event.key()
+
+        # Les raccourcis avec Ctrl sont traités avant
+        # les touches simples réservées aux observations.
+        if modifiers & Qt.KeyboardModifier.ControlModifier and key in (
+            Qt.Key.Key_Plus,
+            Qt.Key.Key_Equal,
+        ):
+            self._playback.increase_speed()
+            event.accept()
+            return
+
+        if modifiers & Qt.KeyboardModifier.ControlModifier and key == Qt.Key.Key_Minus:
+            self._playback.decrease_speed()
+            event.accept()
+            return
+
+        if key == Qt.Key.Key_Left:
             self._show_previous_frame()
             event.accept()
             return
-        if event.key() == Qt.Key.Key_Right:
+
+        if key == Qt.Key.Key_Right:
             self._show_next_frame()
             event.accept()
             return
-        if event.key() == Qt.Key.Key_Up:
+
+        if key == Qt.Key.Key_Up:
             self._open_previous_file()
             event.accept()
             return
-        if event.key() == Qt.Key.Key_Down:
+
+        if key == Qt.Key.Key_Down:
             self._open_next_file()
             event.accept()
             return
-        if event.key() == Qt.Key.Key_Space:
+
+        if key == Qt.Key.Key_Space:
             if not self._persistent_waiting_for_frame:
                 self._playback.toggle()
 
             event.accept()
             return
-        if event.key() in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
-            self._playback.increase_speed()
-            event.accept()
-            return
-        if event.key() == Qt.Key.Key_Minus:
-            self._playback.decrease_speed()
-            event.accept()
-            return
+
+        if modifiers == Qt.KeyboardModifier.NoModifier:
+            text = event.text().strip().upper()
+
+            if text and self.quick_observation_panel.select_taxon_by_shortcut(text):
+                event.accept()
+                return
+
         super().keyPressEvent(event)
 
     @Slot()
@@ -904,4 +972,31 @@ class MainWindow(QMainWindow):
             self._opened_station.database_path,
             self,
         )
-        dialog.exec()
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._reload_quick_observation_taxa()
+
+    def _reload_quick_observation_taxa(self) -> None:
+        if self._opened_station is None:
+            self.quick_observation_panel.set_taxa([])
+            return
+
+        taxa = self.quick_observation_taxon_service.list_active(self._opened_station.database_path)
+        self.quick_observation_panel.set_taxa(taxa)
+
+    @Slot(object)
+    def _preview_observation_draft(
+        self,
+        draft: ObservationDraft,
+    ) -> None:
+        direction_labels = {
+            -1: "dévalaison",
+            0: "indéterminé",
+            1: "montaison",
+        }
+        self.statusBar().showMessage(
+            f"Brouillon : {draft.tax_code} ×{draft.individual_count} — "
+            f"{direction_labels[draft.direction]}. "
+            "Aucune donnée n'a encore été enregistrée."
+        )
+        self.quick_observation_panel.reset_after_draft()
