@@ -56,7 +56,7 @@ _HEADERS = (
     "Nom commun",
     "Stade",
     "Code stade",
-    "SANDRE",
+    "Code SANDRE",
     "Nom scientifique",
     "Raccourci",
 )
