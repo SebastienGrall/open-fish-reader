@@ -9,6 +9,9 @@ from .catalog_schema import (
     create_catalog_schema,
 )
 from .migration_v5 import migrate_taxa_to_v5
+from .migration_v6_reference import (
+    migrate_taxa_to_reference_v6,
+)
 
 
 def migrate_database(
@@ -81,6 +84,10 @@ def migrate_database(
     if version < 5:
         migrate_taxa_to_v5(connection)
         version = 5
+
+    if version < 6:
+        migrate_taxa_to_reference_v6(connection)
+        version = 6
 
     connection.execute(
         """

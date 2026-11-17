@@ -11,8 +11,8 @@ from ...domain.taxon import Taxon
 class EditableTaxon:
     id: int
     tax_code: str
-    stage_code: int
-    stage_label: str
+    stage_code: str | None
+    stage_label: str | None
     common_name: str
     sandre_code: str | None
     scientific_name: str
@@ -84,38 +84,34 @@ class TaxonTableModel(QAbstractTableModel):
             and 0 <= section < len(_HEADERS)
         ):
             return _HEADERS[section]
-
         return None
 
     def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
         if not index.isValid() or not 0 <= index.row() < len(self._items):
             return None
         item = self._items[index.row()]
-        column = index.column()
-
-        if column == TaxonColumns.ACTIVE and role == Qt.ItemDataRole.CheckStateRole:
+        if index.column() == TaxonColumns.ACTIVE and role == Qt.ItemDataRole.CheckStateRole:
             return Qt.CheckState.Checked if item.is_active else Qt.CheckState.Unchecked
-
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
             values = (
                 "",
                 item.display_order,
                 item.tax_code,
                 item.common_name,
-                item.stage_label,
-                item.stage_code,
+                item.stage_label or "Aucun stade",
+                item.stage_code or "",
                 item.sandre_code or "",
                 item.scientific_name,
                 item.keyboard_shortcut or "",
             )
-            return values[column]
-
+            return values[index.column()]
         if role == Qt.ItemDataRole.ToolTipRole:
-            return (
-                f"{item.tax_code} — {item.common_name}\n"
-                f"{item.scientific_name}\n"
+            stage = (
                 f"Stade {item.stage_code} : {item.stage_label}"
+                if item.stage_code and item.stage_label
+                else "Aucun stade"
             )
+            return f"{item.tax_code} — {item.common_name}\n{item.scientific_name}\n{stage}"
         return None
 
     def flags(self, index: QModelIndex) -> Qt.ItemFlag:
@@ -132,22 +128,20 @@ class TaxonTableModel(QAbstractTableModel):
         if not index.isValid() or not 0 <= index.row() < len(self._items):
             return False
         item = self._items[index.row()]
-        column = index.column()
-
-        if column == TaxonColumns.ACTIVE and role == Qt.ItemDataRole.CheckStateRole:
+        if index.column() == TaxonColumns.ACTIVE and role == Qt.ItemDataRole.CheckStateRole:
             self._items[index.row()] = replace(item, is_active=value == Qt.CheckState.Checked.value)
-        elif column == TaxonColumns.ORDER and role == Qt.ItemDataRole.EditRole:
+        elif index.column() == TaxonColumns.ORDER and role == Qt.ItemDataRole.EditRole:
             try:
                 order = max(0, int(value))
             except (TypeError, ValueError):
                 return False
             self._items[index.row()] = replace(item, display_order=order)
-        elif column == TaxonColumns.SHORTCUT and role == Qt.ItemDataRole.EditRole:
-            shortcut = normalize_shortcut(str(value))
-            self._items[index.row()] = replace(item, keyboard_shortcut=shortcut)
+        elif index.column() == TaxonColumns.SHORTCUT and role == Qt.ItemDataRole.EditRole:
+            self._items[index.row()] = replace(
+                item, keyboard_shortcut=normalize_shortcut(str(value))
+            )
         else:
             return False
-
         self.dataChanged.emit(index, index, [role])
         self._validate()
         return True
@@ -170,26 +164,17 @@ class TaxonTableModel(QAbstractTableModel):
         for item in self._items:
             if not item.is_active or not item.keyboard_shortcut:
                 continue
-            shortcut = item.keyboard_shortcut
-            if shortcut in shortcuts:
-                conflicts.append(f"{shortcut} ({shortcuts[shortcut]} / {item.tax_code})")
+            if item.keyboard_shortcut in shortcuts:
+                conflicts.append(
+                    f"{item.keyboard_shortcut} ({shortcuts[item.keyboard_shortcut]} / {item.tax_code})"
+                )
             else:
-                shortcuts[shortcut] = item.tax_code
-
+                shortcuts[item.keyboard_shortcut] = item.tax_code
         if conflicts:
-            self.validation_changed.emit(
-                False,
-                "Raccourcis en conflit : " + ", ".join(conflicts),
-            )
+            self.validation_changed.emit(False, "Raccourcis en conflit : " + ", ".join(conflicts))
         else:
             self.validation_changed.emit(True, "Configuration valide")
 
 
 def normalize_shortcut(value: str) -> str | None:
-    shortcut = value.strip().upper()
-    if not shortcut:
-        return None
-    # Un raccourci taxon est volontairement une seule touche alphanumérique.
-    if len(shortcut) != 1 or not shortcut.isalnum():
-        return shortcut
-    return shortcut
+    return value.strip().upper() or None

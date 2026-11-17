@@ -3,43 +3,81 @@ from pathlib import Path
 
 import pytest
 
-from open_fish_reader.database.catalog_schema import create_catalog_schema
-from open_fish_reader.database.connection import open_database
-from open_fish_reader.database.repositories.taxon_repository import TaxonRepository
+from open_fish_reader.database.connection import (
+    open_database,
+)
+from open_fish_reader.database.repositories.taxon_repository import (
+    TaxonRepository,
+)
+from open_fish_reader.services.taxon_reference_service import (
+    TaxonReferenceService,
+)
 
 
-def test_duplicate_active_shortcuts_are_rejected(tmp_path: Path) -> None:
-    connection = open_database(tmp_path / "config.sqlite")
-    create_catalog_schema(connection)
-    repository = TaxonRepository(connection)
-    now = datetime.now(UTC)
-    with connection:
-        repository.upsert_seed(
-            source_tax_id=1,
-            tax_code="AAA",
-            stage_code=5,
-            stage_label="adulte",
-            common_name="A",
-            sandre_code=None,
-            scientific_name="A a",
-            display_order=1,
-            now=now,
+def test_duplicate_active_shortcuts_are_rejected(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "config.sqlite"
+
+    connection = open_database(database_path)
+
+    try:
+        connection.execute(
+            """
+            CREATE TABLE stations (
+                id INTEGER PRIMARY KEY
+            )
+            """
         )
-        repository.upsert_seed(
-            source_tax_id=2,
-            tax_code="BBB",
-            stage_code=5,
-            stage_label="adulte",
-            common_name="B",
-            sandre_code=None,
-            scientific_name="B b",
-            display_order=2,
-            now=now,
-        )
-    ids = [taxon.id for taxon in repository.list_all()]
-    with pytest.raises(ValueError, match="même raccourci"), connection:
-        repository.save_configuration(
-            ((ids[0], True, 1, "A"), (ids[1], True, 2, "A")),
-            now,
-        )
-    connection.close()
+        connection.commit()
+    finally:
+        connection.close()
+
+    TaxonReferenceService().initialize(database_path)
+
+    connection = open_database(database_path)
+
+    try:
+        rows = connection.execute(
+            """
+            SELECT id
+            FROM taxa
+            WHERE tax_code IN ('AGJ', 'AGG')
+            ORDER BY tax_code
+            """
+        ).fetchall()
+
+        assert len(rows) == 2
+
+        first_id = int(rows[0]["id"])
+        second_id = int(rows[1]["id"])
+
+        repository = TaxonRepository(connection)
+
+        with (
+            pytest.raises(
+                ValueError,
+                match="même raccourci",
+            ),
+            connection,
+        ):
+            repository.save_configuration(
+                (
+                    (
+                        first_id,
+                        True,
+                        1,
+                        "A",
+                    ),
+                    (
+                        second_id,
+                        True,
+                        2,
+                        "A",
+                    ),
+                ),
+                datetime.now(UTC),
+            )
+
+    finally:
+        connection.close()

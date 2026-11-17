@@ -25,6 +25,3 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-
-[tool.setuptools.package-data]
-open_fish_reader = ["resources/*.csv"]

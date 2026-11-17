@@ -15,7 +15,7 @@ from ..domain.station import Station
 from ..indexing.day_scanner import find_day_folders
 from ..indexing.station_scanner import scan_station_identity
 from ..version import APP_VERSION
-from .taxon_catalog_service import TaxonCatalogService
+from .taxon_reference_service import TaxonReferenceService
 
 
 @dataclass(slots=True)
@@ -57,7 +57,7 @@ class StationService:
                 now.isoformat(timespec="milliseconds"),
             )
 
-            TaxonCatalogService().ensure_seeded(database_path)
+            TaxonReferenceService().initialize(database_path)
 
             day_folders = find_day_folders(station_folder)
 

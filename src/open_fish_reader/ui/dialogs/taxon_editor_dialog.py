@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -14,6 +15,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...domain.development_stage import DevelopmentStage
+
 
 @dataclass(frozen=True, slots=True)
 class TaxonEditorValue:
@@ -21,8 +24,7 @@ class TaxonEditorValue:
     common_name: str
     scientific_name: str
     sandre_code: str | None
-    stage_code: int
-    stage_label: str
+    stage_code: str | None
     is_active: bool
     display_order: int
     keyboard_shortcut: str | None
@@ -31,26 +33,31 @@ class TaxonEditorValue:
 class TaxonEditorDialog(QDialog):
     def __init__(
         self,
+        stages: list[DevelopmentStage],
         parent: QWidget | None = None,
         initial: TaxonEditorValue | None = None,
         code_editable: bool = True,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle(
-            "Ajouter un taxon/stade" if initial is None else "Modifier le taxon/stade"
-        )
-        self.resize(460, 420)
+        self.setWindowTitle("Ajouter un taxon" if initial is None else "Modifier le taxon")
+        self.resize(460, 390)
 
         self.code_edit = QLineEdit(initial.tax_code if initial else "")
-        self.code_edit.setMaxLength(12)
+        self.code_edit.setMaxLength(10)
         self.code_edit.setEnabled(code_editable)
         self.common_name_edit = QLineEdit(initial.common_name if initial else "")
         self.scientific_name_edit = QLineEdit(initial.scientific_name if initial else "")
         self.sandre_code_edit = QLineEdit(initial.sandre_code or "" if initial else "")
-        self.stage_code_spin = QSpinBox()
-        self.stage_code_spin.setRange(0, 99)
-        self.stage_code_spin.setValue(initial.stage_code if initial else 5)
-        self.stage_label_edit = QLineEdit(initial.stage_label if initial else "adulte")
+
+        self.stage_combo = QComboBox()
+        self.stage_combo.addItem("Aucun stade", None)
+        for stage in stages:
+            self.stage_combo.addItem(f"{stage.label} [{stage.code}]", stage.code)
+        if initial and initial.stage_code:
+            index = self.stage_combo.findData(initial.stage_code)
+            if index >= 0:
+                self.stage_combo.setCurrentIndex(index)
+
         self.active_checkbox = QCheckBox("Afficher dans le panneau de saisie")
         self.active_checkbox.setChecked(initial.is_active if initial else True)
         self.order_spin = QSpinBox()
@@ -65,8 +72,7 @@ class TaxonEditorDialog(QDialog):
         form.addRow("Nom commun *", self.common_name_edit)
         form.addRow("Nom scientifique *", self.scientific_name_edit)
         form.addRow("Code SANDRE", self.sandre_code_edit)
-        form.addRow("Code stade *", self.stage_code_spin)
-        form.addRow("Libellé du stade *", self.stage_label_edit)
+        form.addRow("Stade", self.stage_combo)
         form.addRow("Ordre", self.order_spin)
         form.addRow("Raccourci", self.shortcut_edit)
         form.addRow("", self.active_checkbox)
@@ -77,48 +83,36 @@ class TaxonEditorDialog(QDialog):
         buttons.button(QDialogButtonBox.StandardButton.Save).setText("Enregistrer")
         buttons.accepted.connect(self._validate_and_accept)
         buttons.rejected.connect(self.reject)
-
         layout = QVBoxLayout(self)
         layout.addLayout(form)
         layout.addWidget(buttons)
 
     def value(self) -> TaxonEditorValue:
-        shortcut = self.shortcut_edit.text().strip().upper() or None
         return TaxonEditorValue(
             tax_code=self.code_edit.text().strip().upper(),
             common_name=self.common_name_edit.text().strip(),
             scientific_name=self.scientific_name_edit.text().strip(),
             sandre_code=self.sandre_code_edit.text().strip() or None,
-            stage_code=self.stage_code_spin.value(),
-            stage_label=self.stage_label_edit.text().strip(),
+            stage_code=self.stage_combo.currentData(),
             is_active=self.active_checkbox.isChecked(),
             display_order=self.order_spin.value(),
-            keyboard_shortcut=shortcut,
+            keyboard_shortcut=self.shortcut_edit.text().strip().upper() or None,
         )
 
     def _validate_and_accept(self) -> None:
         value = self.value()
-        missing = []
-        if not value.tax_code:
-            missing.append("code court")
-        if not value.common_name:
-            missing.append("nom commun")
-        if not value.scientific_name:
-            missing.append("nom scientifique")
-        if not value.stage_label:
-            missing.append("libellé du stade")
-        if missing:
+        if not value.tax_code or not value.common_name or not value.scientific_name:
             QMessageBox.warning(
                 self,
                 "Informations manquantes",
-                "Renseignez : " + ", ".join(missing) + ".",
+                "Le code, le nom commun et le nom scientifique sont obligatoires.",
             )
             return
-        if not value.tax_code.replace("_", "").isalnum():
+        if not all(character.isalnum() or character in {"_", "-"} for character in value.tax_code):
             QMessageBox.warning(
                 self,
                 "Code invalide",
-                "Le code court ne peut contenir que des lettres, chiffres ou soulignés.",
+                "Le code accepte uniquement lettres, chiffres, '_' et '-'.",
             )
             return
         if value.keyboard_shortcut and not value.keyboard_shortcut.isalnum():
