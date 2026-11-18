@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Slot
@@ -15,14 +16,17 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QSpinBox,
     QSplitter,
     QTextEdit,
     QToolBar,
+    QToolButton,
 )
 
 from ..core.exceptions import OpenFishReaderError
+from ..database.connection import open_database
 from ..domain.indexed_video_part import IndexedVideoPart
 from ..services.passage_service import (
     PassageInput,
@@ -40,6 +44,9 @@ from ..video.frame import DecodedFrame
 from ..video.playback_controller import PlaybackController
 from .dialogs.day_selection_dialog import DaySelectionDialog
 from .dialogs.indexing_progress_dialog import IndexingProgressDialog
+from .dialogs.passage_list_dialog import (
+    PassageListDialog,
+)
 from .dialogs.taxon_configuration_dialog import TaxonConfigurationDialog
 from .widgets.quick_observation_panel import (
     ObservationDraft,
@@ -129,6 +136,7 @@ class MainWindow(QMainWindow):
         self._playback.playing_changed.connect(self._playback_state_changed)
         self._playback.speed_changed.connect(self._playback_speed_changed)
         self._playback.sequence_finished.connect(self._playback_sequence_finished)
+        self._passage_dialog: PassageListDialog | None = None
 
         self.reader_widget.play_pause_button.clicked.connect(self._playback.toggle)
         self.reader_widget.speed_control.decrease_requested.connect(self._playback.decrease_speed)
@@ -148,9 +156,36 @@ class MainWindow(QMainWindow):
         self.day_action = toolbar.addAction("Choisir une journée", self.choose_day)
         self.day_action.setEnabled(False)
         toolbar.addSeparator()
-        toolbar.addAction("Configuration", self._open_taxon_configuration)
+
+        toolbar.addAction(
+            "Passages",
+            self._open_passage_list,
+        )
+
+        configuration_button = QToolButton(self)
+        configuration_button.setText("Configuration")
+        configuration_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+
+        configuration_menu = QMenu(configuration_button)
+
+        configuration_menu.addAction(
+            "Liste des taxons…",
+            self._open_taxon_configuration,
+        )
+
+        self._size_calibration_action = configuration_menu.addAction("Relations taille / pixels…")
+        self._size_calibration_action.setEnabled(False)
+
+        configuration_button.setMenu(configuration_menu)
+
+        toolbar.addWidget(configuration_button)
+
         toolbar.addSeparator()
-        toolbar.addAction("Quitter", self.close)
+
+        toolbar.addAction(
+            "Quitter",
+            self.close,
+        )
 
         self.statusBar().showMessage("Prêt")
 
@@ -1064,7 +1099,10 @@ class MainWindow(QMainWindow):
             )
             return
 
-        self._update_current_part_observation_count(video_part_id)
+        self._update_video_part_observation_count(video_part_id)
+
+        if self._passage_dialog is not None and self._passage_dialog.isVisible():
+            self._passage_dialog.reload()
 
         self.quick_observation_panel.reset_after_draft()
 
@@ -1075,44 +1113,58 @@ class MainWindow(QMainWindow):
         }
 
         self.statusBar().showMessage(
-            
-                f"Passage enregistré : "
-                f"{draft.tax_code} "
-                f"×{draft.individual_count}, "
-                f"{direction_labels[draft.direction]}, "
-                f"image {frame.frame_number + 1}"
-            
+            f"Passage enregistré : "
+            f"{draft.tax_code} "
+            f"×{draft.individual_count}, "
+            f"{direction_labels[draft.direction]}, "
+            f"image {frame.frame_number + 1}"
         )
 
         if was_playing:
             self._playback.play()
 
-    def _update_current_part_observation_count(
+    def _update_video_part_observation_count(
         self,
         video_part_id: int,
     ) -> None:
         if self._opened_station is None:
             return
 
-        row = self._opened_station.connection.execute(
-            """
-                SELECT observation_count
+        connection = open_database(self._opened_station.database_path)
+
+        try:
+            row = connection.execute(
+                """
+                SELECT
+                    observation_count,
+                    review_status
                 FROM video_parts
                 WHERE id = ?
                 """,
-            (video_part_id,),
-        ).fetchone()
+                (video_part_id,),
+            ).fetchone()
+        finally:
+            connection.close()
 
         if row is None:
             return
 
         observation_count = int(row["observation_count"])
 
-        if self._current_part_index >= 0:
-            self.video_part_panel.set_observation_count(
-                self._current_part_index,
-                observation_count,
-            )
+        target_index = None
+
+        for index, part in enumerate(self._video_parts):
+            if part.id == video_part_id:
+                target_index = index
+                break
+
+        if target_index is None:
+            return
+
+        self.video_part_panel.set_observation_count(
+            target_index,
+            observation_count,
+        )
 
     def _request_passage_direction(
         self,
@@ -1144,3 +1196,81 @@ class MainWindow(QMainWindow):
 
         if not (self.quick_observation_panel.request_direction(direction)):
             self.statusBar().showMessage("Sélectionnez d'abord une espèce.")
+
+    def _open_passage_list(self) -> None:
+        if self._opened_station is None:
+            QMessageBox.information(
+                self,
+                "Aucune station",
+                "Ouvrez d'abord une station.",
+            )
+            return
+
+        current_day = None
+
+        if self._current_day_folder is not None:
+            try:
+                current_day = datetime.strptime(
+                    self._current_day_folder.name,
+                    "%Y-%m-%d",
+                ).date()
+            except ValueError:
+                current_day = None
+
+        if self._passage_dialog is not None and self._passage_dialog.isVisible():
+            self._passage_dialog.raise_()
+            self._passage_dialog.activateWindow()
+            self._passage_dialog.reload()
+            return
+
+        self._passage_dialog = PassageListDialog(
+            database_path=(self._opened_station.database_path),
+            station_id=(self._opened_station.station_id),
+            current_day=current_day,
+            parent=self,
+        )
+
+        self._passage_dialog.passage_open_requested.connect(self._open_passage_in_reader)
+        self._passage_dialog.passages_changed.connect(self._update_video_part_observation_count)
+
+        self._passage_dialog.finished.connect(self._passage_dialog_closed)
+
+        self._passage_dialog.show()
+
+    def _passage_dialog_closed(
+        self,
+        _result: int,
+    ) -> None:
+        if self._passage_dialog is not None:
+            self._passage_dialog.deleteLater()
+
+        self._passage_dialog = None
+
+    @Slot(int, int)
+    def _open_passage_in_reader(
+        self,
+        video_part_id: int,
+        frame_number: int,
+    ) -> None:
+        target_index = None
+
+        for index, part in enumerate(self._video_parts):
+            if part.id == video_part_id:
+                target_index = index
+                break
+
+        if target_index is None:
+            QMessageBox.warning(
+                self,
+                "Séquence indisponible",
+                ("La séquence du passage n'est pas chargée dans la journée courante."),
+            )
+            return
+
+        self._pending_auto_play = False
+        self._requested_initial_frame = max(
+            0,
+            frame_number,
+        )
+
+        self._open_part(target_index)
