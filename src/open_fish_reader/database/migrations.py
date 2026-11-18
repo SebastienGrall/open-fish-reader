@@ -13,6 +13,7 @@ from .migration_v6_reference import (
     migrate_taxa_to_reference_v6,
 )
 from .migration_v7 import migrate_to_v7
+from .migration_v8 import migrate_to_v8
 
 
 def migrate_database(
@@ -93,6 +94,10 @@ def migrate_database(
     if version < 7:
         migrate_to_v7(connection)
         version = 7
+
+    if version < 8:
+        migrate_to_v8(connection)
+        version = 8
 
     connection.execute(
         """

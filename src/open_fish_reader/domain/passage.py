@@ -20,6 +20,9 @@ class Passage:
     needs_review: bool
     glass_position: str
     length_mm: int | None
+    length_pixels: float | None
+    calibration_id: int | None
+    measurement_method: str
     comment: str | None
     created_at: datetime
     updated_at: datetime

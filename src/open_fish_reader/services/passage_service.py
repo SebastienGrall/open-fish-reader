@@ -24,6 +24,13 @@ class PassageInput:
     needs_review: bool
     glass_position: str
     length_mm: int | None
+    length_pixels: float | None
+    calibration_id: int | None
+    measurement_method: str
+    measurement_points: tuple[
+        tuple[float, float],
+        ...,
+    ]
     comment: str
 
 
@@ -49,6 +56,10 @@ class PassageService:
                     needs_review=value.needs_review,
                     glass_position=value.glass_position,
                     length_mm=value.length_mm,
+                    length_pixels=value.length_pixels,
+                    calibration_id=value.calibration_id,
+                    measurement_method=value.measurement_method,
+                    measurement_points=value.measurement_points,
                     comment=value.comment,
                     now=now,
                 )
@@ -82,3 +93,27 @@ class PassageService:
             raise ValueError("La position vidéo est invalide.")
         if value.length_mm is not None and value.length_mm <= 0:
             raise ValueError("La taille doit être positive ou absente.")
+        points_count = len(value.measurement_points)
+
+        if value.measurement_method == "polyline_calibration":
+            if (
+                value.calibration_id is None
+                or value.length_pixels is None
+                or value.length_pixels <= 0
+                or not 2 <= points_count <= 100
+            ):
+                raise ValueError("La mesure multipoint est incomplète.")
+
+        elif value.measurement_method == "manual":
+            if value.length_mm is None:
+                raise ValueError("Une taille manuelle est requise.")
+
+            if points_count:
+                raise ValueError("Une taille manuelle ne doit pas contenir de points.")
+
+        elif value.measurement_method == "not_measured":
+            if points_count:
+                raise ValueError("Une observation non mesurée ne doit pas contenir de points.")
+
+        else:
+            raise ValueError("Méthode de mesure inconnue.")

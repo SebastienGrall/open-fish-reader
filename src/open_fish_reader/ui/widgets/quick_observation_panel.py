@@ -30,8 +30,8 @@ class ObservationDraft:
     taxon_id: int
     tax_code: str
     common_name: str
-    stage_code: int
-    stage_label: str
+    stage_code: str | None
+    stage_label: str | None
     individual_count: int
     direction: int
     confidence: str
@@ -39,6 +39,10 @@ class ObservationDraft:
     length_mm: int | None
     glass_position: str
     comment: str
+    length_pixels: float | None
+    calibration_id: int | None
+    measurement_method: str
+    measurement_points: tuple[tuple[float, float], ...]
 
 
 class QuickObservationPanel(QWidget):
@@ -46,6 +50,7 @@ class QuickObservationPanel(QWidget):
 
     taxon_selected = Signal(object)
     draft_requested = Signal(object)
+    measurement_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -53,6 +58,10 @@ class QuickObservationPanel(QWidget):
         self.setMaximumWidth(390)
         self._selected_taxon: Taxon | None = None
         self._taxon_buttons: dict[int, TaxonButton] = {}
+        self._measurement_points: tuple[tuple[float, float], ...] = ()
+        self._length_pixels: float | None = None
+        self._calibration_id: int | None = None
+        self._measurement_method = "not_measured"
 
         title = QLabel("Observation rapide")
         title.setStyleSheet("font-size: 16px; font-weight: 600;")
@@ -75,6 +84,12 @@ class QuickObservationPanel(QWidget):
         self.length_spin.setSuffix(" mm")
         self.length_spin.setValue(0)
 
+        self.measure_button = QPushButton("Mesurer…")
+        self.measurement_label = QLabel("Aucune mesure sur image")
+        self.measurement_label.setWordWrap(True)
+
+        self.measure_button.clicked.connect(self.measurement_requested.emit)
+
         self.glass_position_combo = QComboBox()
         self.glass_position_combo.addItem("Proche", "near")
         self.glass_position_combo.addItem("Milieu", "middle")
@@ -95,7 +110,14 @@ class QuickObservationPanel(QWidget):
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         form.addRow("Nombre", self.count_spin)
         form.addRow("Taille", self.length_spin)
-        form.addRow("Position vitre", self.glass_position_combo)
+
+        form.addRow("", self.measure_button)
+        form.addRow("", self.measurement_label)
+
+        form.addRow(
+            "Position vitre",
+            self.glass_position_combo,
+        )
         form.addRow("Confiance", self.confidence_combo)
         form.addRow("", self.review_checkbox)
         form.addRow("Commentaire", self.comment_edit)
@@ -129,12 +151,6 @@ class QuickObservationPanel(QWidget):
         taxa_layout.addWidget(self.empty_taxa_label)
         taxa_layout.addWidget(scroll, stretch=1)
 
-        self.information_label = QLabel(
-            "Cette étape valide l'ergonomie. Les boutons de sens ne sont pas encore enregistrés en base."
-        )
-        self.information_label.setWordWrap(True)
-        self.information_label.setStyleSheet("color: palette(mid);")
-
         separator = QFrame()
         separator.setFrameShape(QFrame.Shape.HLine)
 
@@ -148,7 +164,6 @@ class QuickObservationPanel(QWidget):
         layout.addWidget(direction_group)
         layout.addWidget(separator)
         layout.addWidget(taxa_group, stretch=1)
-        layout.addWidget(self.information_label)
 
         self._set_direction_enabled(False)
 
@@ -205,6 +220,12 @@ class QuickObservationPanel(QWidget):
         self.confidence_combo.setCurrentIndex(0)
         self.review_checkbox.setChecked(False)
         self.comment_edit.clear()
+        self._measurement_points = ()
+        self._length_pixels = None
+        self._calibration_id = None
+        self._measurement_method = "not_measured"
+        self.measurement_label.setText("Aucune mesure sur image")
+        self.measure_button.setText("Mesurer…")
 
     def _direction_button(self, text: str, tooltip: str, direction: int) -> QPushButton:
         button = QPushButton(text)
@@ -231,6 +252,14 @@ class QuickObservationPanel(QWidget):
             length_mm=length,
             glass_position=str(self.glass_position_combo.currentData()),
             comment=self.comment_edit.text().strip(),
+            length_pixels=self._length_pixels,
+            calibration_id=self._calibration_id,
+            measurement_method=(
+                self._measurement_method
+                if self._length_pixels is not None
+                else ("manual" if length is not None else "not_measured")
+            ),
+            measurement_points=(self._measurement_points),
         )
         self.draft_requested.emit(draft)
 
@@ -257,3 +286,24 @@ class QuickObservationPanel(QWidget):
 
         self._request_draft(direction)
         return True
+
+    def set_polyline_measurement(
+        self,
+        *,
+        points: tuple[tuple[float, float], ...],
+        length_pixels: float,
+        length_mm: int,
+        calibration_id: int,
+    ) -> None:
+        self._measurement_points = points
+        self._length_pixels = length_pixels
+        self._calibration_id = calibration_id
+        self._measurement_method = "polyline_calibration"
+
+        self.length_spin.setValue(length_mm)
+
+        self.measurement_label.setText(
+            f"{len(points)} points, {length_pixels:.1f} px, {length_mm} mm"
+        )
+
+        self.measure_button.setText("Recommencer la mesure…")

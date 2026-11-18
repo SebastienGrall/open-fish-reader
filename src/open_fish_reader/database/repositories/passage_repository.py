@@ -27,18 +27,45 @@ class PassageRepository:
         needs_review: bool,
         glass_position: str,
         length_mm: int | None,
+        length_pixels: float | None,
+        calibration_id: int | None,
+        measurement_method: str,
+        measurement_points: tuple[
+            tuple[float, float],
+            ...,
+        ],
         comment: str | None,
         now: datetime,
     ) -> int:
         timestamp = now.isoformat(timespec="milliseconds")
+
         cursor = self.connection.execute(
             """
             INSERT INTO passages (
-                passage_uuid, station_id, video_part_id, taxon_id,
-                frame_number, position_ms, observed_at, individual_count,
-                direction, confidence, needs_review, glass_position,
-                length_mm, comment, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                passage_uuid,
+                station_id,
+                video_part_id,
+                taxon_id,
+                frame_number,
+                position_ms,
+                observed_at,
+                individual_count,
+                direction,
+                confidence,
+                needs_review,
+                glass_position,
+                length_mm,
+                length_pixels,
+                calibration_id,
+                measurement_method,
+                comment,
+                created_at,
+                updated_at
+            )
+            VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
             """,
             (
                 str(passage_uuid),
@@ -54,12 +81,43 @@ class PassageRepository:
                 int(needs_review),
                 glass_position,
                 length_mm,
+                length_pixels,
+                calibration_id,
+                measurement_method,
                 comment or None,
                 timestamp,
                 timestamp,
             ),
         )
-        return int(cursor.lastrowid)
+
+        passage_id = int(cursor.lastrowid)
+
+        if measurement_points:
+            self.connection.executemany(
+                """
+                INSERT INTO passage_measurement_points (
+                    passage_id,
+                    point_order,
+                    x,
+                    y
+                )
+                VALUES (?, ?, ?, ?)
+                """,
+                [
+                    (
+                        passage_id,
+                        point_order,
+                        x,
+                        y,
+                    )
+                    for point_order, (
+                        x,
+                        y,
+                    ) in enumerate(measurement_points)
+                ],
+            )
+
+        return passage_id
 
     def get(self, passage_id: int) -> Passage | None:
         row = self.connection.execute(
@@ -98,4 +156,33 @@ class PassageRepository:
             comment=(str(row["comment"]) if row["comment"] is not None else None),
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
+            length_pixels=(
+                float(row["length_pixels"]) if row["length_pixels"] is not None else None
+            ),
+            calibration_id=(
+                int(row["calibration_id"]) if row["calibration_id"] is not None else None
+            ),
+            measurement_method=str(row["measurement_method"]),
+        )
+
+    def list_measurement_points(
+        self,
+        passage_id: int,
+    ) -> tuple[tuple[float, float], ...]:
+        rows = self.connection.execute(
+            """
+            SELECT x, y
+            FROM passage_measurement_points
+            WHERE passage_id = ?
+            ORDER BY point_order
+            """,
+            (passage_id,),
+        ).fetchall()
+
+        return tuple(
+            (
+                float(row["x"]),
+                float(row["y"]),
+            )
+            for row in rows
         )

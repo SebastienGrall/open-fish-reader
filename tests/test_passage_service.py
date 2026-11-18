@@ -2,6 +2,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from open_fish_reader.database.connection import open_database
+from open_fish_reader.database.migration_v8 import (
+    migrate_to_v8,
+)
 from open_fish_reader.database.passage_schema import create_passage_schema
 from open_fish_reader.services.passage_service import PassageInput, PassageService
 
@@ -20,9 +23,13 @@ def prepare_database(path: Path) -> None:
         INSERT INTO stations VALUES (1);
         INSERT INTO taxa VALUES (2);
         INSERT INTO video_parts VALUES (3, 0, 'unread');
+        CREATE TABLE size_calibrations (
+            id INTEGER PRIMARY KEY
+        );
         """
     )
     create_passage_schema(connection)
+    migrate_to_v8(connection)
     connection.commit()
     connection.close()
 
@@ -45,6 +52,10 @@ def test_creates_passage_and_updates_video_part(tmp_path: Path) -> None:
             needs_review=False,
             glass_position="middle",
             length_mm=None,
+            length_pixels=None,
+            calibration_id=None,
+            measurement_method="not_measured",
+            measurement_points=(),
             comment="",
         ),
     )

@@ -11,6 +11,17 @@ class SizeCalibrationRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
 
+    def list_for_station(self, station_id: int) -> list[SizeCalibration]:
+        rows = self.connection.execute(
+            """
+            SELECT * FROM size_calibrations
+            WHERE station_id = ?
+            ORDER BY valid_from DESC, id DESC
+            """,
+            (station_id,),
+        ).fetchall()
+        return [self._from_row(row) for row in rows]
+
     def create(
         self,
         *,
@@ -22,15 +33,30 @@ class SizeCalibrationRepository:
         comment: str | None,
         now: datetime,
     ) -> int:
-        for value in (near_mm_per_pixel, middle_mm_per_pixel, far_mm_per_pixel):
-            if value <= 0:
-                raise ValueError("Les ratios millimètres/pixel doivent être positifs.")
+        if (
+            min(
+                near_mm_per_pixel,
+                middle_mm_per_pixel,
+                far_mm_per_pixel,
+            )
+            <= 0
+        ):
+            raise ValueError("Les ratios millimètres/pixel doivent être positifs.")
 
         valid_from_iso = valid_from.isoformat(timespec="milliseconds")
         timestamp = now.isoformat(timespec="milliseconds")
-        active = self.find_for_timestamp(station_id, valid_from)
-        if active is not None and active.valid_from == valid_from:
-            raise ValueError("Une calibration existe déjà à cette date pour la station.")
+        newer = self.connection.execute(
+            """
+            SELECT 1 FROM size_calibrations
+            WHERE station_id = ? AND valid_from >= ?
+            LIMIT 1
+            """,
+            (station_id, valid_from_iso),
+        ).fetchone()
+        if newer is not None:
+            raise ValueError(
+                "La nouvelle calibration doit commencer après toutes les calibrations existantes."
+            )
 
         self.connection.execute(
             """
@@ -62,11 +88,18 @@ class SizeCalibrationRepository:
         )
         return int(cursor.lastrowid)
 
-    def find_for_timestamp(
-        self,
-        station_id: int,
-        observed_at: datetime,
-    ) -> SizeCalibration | None:
+    def update_comment(self, calibration_id: int, comment: str | None, now: datetime) -> None:
+        self.connection.execute(
+            """
+            UPDATE size_calibrations
+            SET comment = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (comment, now.isoformat(timespec="milliseconds"), calibration_id),
+        )
+
+    def find_for_timestamp(self, station_id: int, observed_at: datetime) -> SizeCalibration | None:
+        timestamp = observed_at.isoformat(timespec="milliseconds")
         row = self.connection.execute(
             """
             SELECT * FROM size_calibrations
@@ -76,11 +109,7 @@ class SizeCalibrationRepository:
             ORDER BY valid_from DESC
             LIMIT 1
             """,
-            (
-                station_id,
-                observed_at.isoformat(timespec="milliseconds"),
-                observed_at.isoformat(timespec="milliseconds"),
-            ),
+            (station_id, timestamp, timestamp),
         ).fetchone()
         return self._from_row(row) if row is not None else None
 

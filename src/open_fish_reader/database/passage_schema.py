@@ -21,6 +21,25 @@ CREATE TABLE IF NOT EXISTS passages (
     glass_position TEXT NOT NULL DEFAULT 'middle'
         CHECK (glass_position IN ('near', 'middle', 'far')),
     length_mm INTEGER CHECK (length_mm IS NULL OR length_mm > 0),
+    length_pixels REAL
+        CHECK (
+            length_pixels IS NULL
+            OR length_pixels > 0
+        ),
+
+    calibration_id INTEGER
+        REFERENCES size_calibrations(id)
+        ON DELETE RESTRICT,
+
+    measurement_method TEXT NOT NULL
+        DEFAULT 'not_measured'
+        CHECK (
+            measurement_method IN (
+                'not_measured',
+                'manual',
+                'polyline_calibration'
+            )
+        ),
     comment TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL

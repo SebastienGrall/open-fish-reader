@@ -27,6 +27,9 @@ from PySide6.QtWidgets import (
 
 from ..core.exceptions import OpenFishReaderError
 from ..database.connection import open_database
+from ..database.repositories.size_calibration_repository import (
+    SizeCalibrationRepository,
+)
 from ..domain.indexed_video_part import IndexedVideoPart
 from ..services.passage_service import (
     PassageInput,
@@ -46,6 +49,9 @@ from .dialogs.day_selection_dialog import DaySelectionDialog
 from .dialogs.indexing_progress_dialog import IndexingProgressDialog
 from .dialogs.passage_list_dialog import (
     PassageListDialog,
+)
+from .dialogs.size_calibration_dialog import (
+    SizeCalibrationDialog,
 )
 from .dialogs.taxon_configuration_dialog import TaxonConfigurationDialog
 from .widgets.quick_observation_panel import (
@@ -149,6 +155,13 @@ class MainWindow(QMainWindow):
         self._video_part_status_service = VideoPartStatusService()
         self._requested_initial_frame = 0
 
+        self._measurement_was_playing = False
+        self.quick_observation_panel.measurement_requested.connect(self._start_measurement)
+
+        self.reader_widget.video_widget.measurement_finished.connect(self._finish_measurement)
+
+        self.reader_widget.video_widget.measurement_cancelled.connect(self._measurement_cancelled)
+
         toolbar = QToolBar("Principal", self)
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
@@ -173,8 +186,10 @@ class MainWindow(QMainWindow):
             self._open_taxon_configuration,
         )
 
-        self._size_calibration_action = configuration_menu.addAction("Relations taille / pixels…")
-        self._size_calibration_action.setEnabled(False)
+        self._size_calibration_action = configuration_menu.addAction(
+            "Relations taille / pixels…",
+            self._open_size_calibrations,
+        )
 
         configuration_button.setMenu(configuration_menu)
 
@@ -347,6 +362,8 @@ class MainWindow(QMainWindow):
     def _open_previous_file(self) -> None:
         if self._current_part_index <= 0:
             return
+        if self.reader_widget.video_widget.measurement_active:
+            return
 
         self._pending_auto_play = self._playback.is_playing
         self._requested_initial_frame = 0
@@ -355,6 +372,8 @@ class MainWindow(QMainWindow):
 
     def _open_next_file(self) -> None:
         if self._current_part_index + 1 >= len(self._video_parts):
+            return
+        if self.reader_widget.video_widget.measurement_active:
             return
 
         self._pending_auto_play = self._playback.is_playing
@@ -366,6 +385,8 @@ class MainWindow(QMainWindow):
         if self._frame_thread is not None:
             return
         if index < 0 or index >= len(self._video_parts):
+            return
+        if self.reader_widget.video_widget.measurement_active:
             return
 
         # Sauvegarde de l'ancien fichier avant de
@@ -843,6 +864,9 @@ class MainWindow(QMainWindow):
         modifiers = event.modifiers()
         key = event.key()
 
+        if self.reader_widget.video_widget.measurement_active:
+            return
+
         # Les raccourcis de vitesse restent utilisables
         # même si le focus est dans un champ du panneau.
         if modifiers & Qt.KeyboardModifier.ControlModifier and key in (
@@ -1083,6 +1107,10 @@ class MainWindow(QMainWindow):
                     needs_review=(draft.needs_review),
                     glass_position=(draft.glass_position),
                     length_mm=draft.length_mm,
+                    length_pixels=draft.length_pixels,
+                    calibration_id=draft.calibration_id,
+                    measurement_method=(draft.measurement_method),
+                    measurement_points=(draft.measurement_points),
                     comment=draft.comment,
                 ),
             )
@@ -1274,3 +1302,95 @@ class MainWindow(QMainWindow):
         )
 
         self._open_part(target_index)
+
+    def _open_size_calibrations(
+        self,
+    ) -> None:
+        if self._opened_station is None:
+            QMessageBox.information(
+                self,
+                "Aucune station",
+                "Ouvrez d'abord une station.",
+            )
+            return
+
+        dialog = SizeCalibrationDialog(
+            database_path=(self._opened_station.database_path),
+            station_id=(self._opened_station.station_id),
+            parent=self,
+        )
+
+        dialog.exec()
+
+    def _start_measurement(self) -> None:
+        if self._opened_station is None or self._displayed_frame is None:
+            QMessageBox.information(
+                self,
+                "Mesure impossible",
+                "Aucune image n'est affichée.",
+            )
+            return
+
+        self._measurement_was_playing = self._playback.is_playing
+        self._playback.pause()
+
+        if not (self.reader_widget.video_widget.start_measurement()):
+            return
+
+        self.statusBar().showMessage(
+            "Mesure : cliquez le long du "
+            "poisson. Entrée ou double-clic "
+            "pour terminer, Ctrl+Z pour "
+            "retirer un point, Échap pour "
+            "annuler."
+        )
+
+    @Slot(object, float)
+    def _finish_measurement(
+        self,
+        points: tuple[tuple[float, float], ...],
+        length_pixels: float,
+    ) -> None:
+        if self._opened_station is None or self._displayed_frame is None:
+            return
+
+        connection = open_database(self._opened_station.database_path)
+
+        try:
+            calibration = SizeCalibrationRepository(connection).find_for_timestamp(
+                self._opened_station.station_id,
+                self._displayed_frame.absolute_timestamp,
+            )
+        finally:
+            connection.close()
+
+        if calibration is None:
+            QMessageBox.warning(
+                self,
+                "Aucune calibration",
+                "Aucune relation taille / pixels n'est valide à l'horodatage de cette image.",
+            )
+            return
+
+        glass_position = str(self.quick_observation_panel.glass_position_combo.currentData())
+
+        ratio = calibration.ratio_for_position(glass_position)
+
+        length_mm = round(length_pixels * ratio)
+
+        self.quick_observation_panel.set_polyline_measurement(
+            points=points,
+            length_pixels=length_pixels,
+            length_mm=length_mm,
+            calibration_id=calibration.id,
+        )
+
+        self.statusBar().showMessage(
+            f"Mesure prête : {len(points)} points, {length_pixels:.1f} px, {length_mm} mm"
+        )
+
+    @Slot()
+    def _measurement_cancelled(
+        self,
+    ) -> None:
+        self.statusBar().showMessage("Mesure annulée.")

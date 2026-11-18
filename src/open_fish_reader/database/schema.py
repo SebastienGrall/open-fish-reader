@@ -4,6 +4,7 @@ import sqlite3
 
 from ..core.constants import DATABASE_SCHEMA_VERSION
 from .catalog_schema import create_catalog_schema
+from .migration_v8 import migrate_to_v8
 from .migrations import migrate_database
 from .passage_schema import (
     create_passage_schema,
@@ -108,6 +109,7 @@ def create_initial_schema(connection: sqlite3.Connection, app_version: str, now_
     connection.executescript(SCHEMA)
     create_catalog_schema(connection)
     create_passage_schema(connection)
+    migrate_to_v8(connection)
     connection.execute(
         """
         INSERT OR IGNORE INTO database_metadata (
