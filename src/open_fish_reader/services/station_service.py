@@ -21,6 +21,7 @@ from .taxon_reference_service import TaxonReferenceService
 @dataclass(slots=True)
 class OpenedStation:
     station: Station
+    station_id: int
     database_path: Path
     connection: sqlite3.Connection
     day_folders: list[Path]
@@ -97,6 +98,7 @@ class StationService:
 
             return OpenedStation(
                 station=station,
+                station_id=station_id,
                 database_path=database_path,
                 connection=connection,
                 day_folders=day_folders,

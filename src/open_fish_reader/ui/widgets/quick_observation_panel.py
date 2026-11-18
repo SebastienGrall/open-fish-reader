@@ -247,3 +247,13 @@ class QuickObservationPanel(QWidget):
                 self.taxon_button_group.removeButton(widget)
                 widget.deleteLater()
         self._taxon_buttons.clear()
+
+    def request_direction(
+        self,
+        direction: int,
+    ) -> bool:
+        if direction not in (-1, 0, 1) or self._selected_taxon is None:
+            return False
+
+        self._request_draft(direction)
+        return True

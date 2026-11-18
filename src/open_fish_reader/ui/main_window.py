@@ -3,7 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Slot
-from PySide6.QtGui import QCloseEvent, QKeyEvent
+from PySide6.QtGui import (
+    QCloseEvent,
+    QKeyEvent,
+    QKeySequence,
+    QShortcut,
+)
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -19,6 +24,10 @@ from PySide6.QtWidgets import (
 
 from ..core.exceptions import OpenFishReaderError
 from ..domain.indexed_video_part import IndexedVideoPart
+from ..services.passage_service import (
+    PassageInput,
+    PassageService,
+)
 from ..services.playback_queue_service import PlaybackQueueService
 from ..services.quick_observation_taxon_service import (
     QuickObservationTaxonService,
@@ -48,6 +57,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._opened_station: OpenedStation | None = None
         self._station_service = StationService()
+        self._passage_service = PassageService()
         self._playback_queue_service = PlaybackQueueService()
         self._decoded_frames: list[DecodedFrame] = []
         self._current_frame_index = -1
@@ -65,6 +75,7 @@ class MainWindow(QMainWindow):
         self._persistent_total_frames = 0
         self._persistent_waiting_for_frame = False
         self._persistent_resume_after_frame = False
+        self._displayed_frame: DecodedFrame | None = None
 
         self._current_day_folder: Path | None = None
         self._video_parts: list[IndexedVideoPart] = []
@@ -80,7 +91,28 @@ class MainWindow(QMainWindow):
 
         self.quick_observation_taxon_service = QuickObservationTaxonService()
         self.quick_observation_panel = QuickObservationPanel()
-        self.quick_observation_panel.draft_requested.connect(self._preview_observation_draft)
+        self.quick_observation_panel.draft_requested.connect(self._create_passage_from_draft)
+
+        self._passage_upstream_shortcut = QShortcut(
+            QKeySequence("+"),
+            self,
+        )
+        self._passage_unknown_shortcut = QShortcut(
+            QKeySequence("0"),
+            self,
+        )
+        self._passage_downstream_shortcut = QShortcut(
+            QKeySequence("-"),
+            self,
+        )
+
+        self._passage_upstream_shortcut.activated.connect(
+            lambda: self._request_passage_direction(1)
+        )
+        self._passage_unknown_shortcut.activated.connect(lambda: self._request_passage_direction(0))
+        self._passage_downstream_shortcut.activated.connect(
+            lambda: self._request_passage_direction(-1)
+        )
 
         self.reader_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.reader_splitter.setChildrenCollapsible(False)
@@ -139,6 +171,7 @@ class MainWindow(QMainWindow):
         self._playback.pause()
         self._stop_persistent_worker()
         self._stop_frame_worker()
+        self._displayed_frame = None
         self._close_opened_station()
         self._opened_station = opened_station
         self._reload_quick_observation_taxa()
@@ -340,6 +373,7 @@ class MainWindow(QMainWindow):
         self._persistent_waiting_for_frame = False
         self._persistent_resume_after_frame = False
         self._persistent_requested_frame_index = None
+        self._displayed_frame = None
 
         self.reader_widget.file_label.setText(f"Fichier : {part.video_path.name}")
         self.reader_widget.event_label.setText(f"Événement : {part.source_event_id}")
@@ -354,12 +388,10 @@ class MainWindow(QMainWindow):
 
         cache_decision = decide_full_cache(part)
         if cache_decision.allow_full_cache:
-            self.statusBar().showMessage(f"Chargement en mémoire de {part.video_path.name}...")
             self._start_full_cache_loading(part)
             return
 
         self._persistent_mode = True
-        self.statusBar().showMessage(f"Ouverture persistante de {part.video_path.name}...")
         self._start_persistent_loading(part)
 
     def _start_full_cache_loading(self, part: IndexedVideoPart) -> None:
@@ -484,14 +516,12 @@ class MainWindow(QMainWindow):
         if self._playback.is_playing:
             self._playback.pause()
 
-        self.statusBar().showMessage(f"Chargement de l'image {requested_index + 1}...")
-
         worker.request_frame(requested_index)
 
     def _show_decoded_frame(self, frame: DecodedFrame) -> None:
         if self._current_part_index < 0 or self._current_part_index >= len(self._video_parts):
             return
-        part = self._video_parts[self._current_part_index]
+        self._displayed_frame = frame
         frame_count = self._frame_count()
         timestamp = frame.absolute_timestamp.isoformat(timespec="milliseconds")
         self.reader_widget.video_widget.set_image(frame.image)
@@ -500,9 +530,6 @@ class MainWindow(QMainWindow):
         self.reader_widget.set_frame_navigation_enabled(
             has_previous_frame=(not self._playback.is_playing and frame.frame_number > 0),
             has_next_frame=(not self._playback.is_playing and frame.frame_number + 1 < frame_count),
-        )
-        self.statusBar().showMessage(
-            f"{part.video_path.name} | image {frame.frame_number + 1}/{frame_count}"
         )
 
     @Slot(str)
@@ -518,6 +545,7 @@ class MainWindow(QMainWindow):
         self._persistent_waiting_for_frame = False
         self._persistent_requested_frame_index = None
         self._persistent_resume_after_frame = False
+        self._displayed_frame = None
 
         self.reader_widget.video_widget.clear()
         self.reader_widget.frame_label.setText("Image : erreur")
@@ -581,41 +609,6 @@ class MainWindow(QMainWindow):
         self.reader_widget.speed_control.set_speed(speed)
         if self._persistent_worker is not None:
             self._persistent_worker.set_playback_speed(speed)
-
-    @Slot()
-    def _playback_sequence_finished(self) -> None:
-        next_index = self._current_part_index + 1
-
-        if self._current_part_index >= 0:
-            self.video_part_panel.mark_read(self._current_part_index)
-
-        if next_index >= len(self._video_parts):
-            self._pending_auto_play = False
-
-            self.reader_widget.play_pause_button.setText("Lecture")
-
-            self.reader_widget.set_frame_navigation_enabled(
-                has_previous_frame=(self._current_frame_index > 0),
-                has_next_frame=False,
-            )
-
-            self.statusBar().showMessage("Fin de la journée")
-            return
-
-        self._pending_auto_play = True
-
-        video_part_id = self._current_video_part_id()
-        if self._opened_station is not None and video_part_id is not None:
-            self._video_part_status_service.mark_completed(
-                self._opened_station.database_path,
-                video_part_id,
-                self._current_frame_index,
-            )
-        self.video_part_panel.mark_read(self._current_part_index)
-        self._requested_initial_frame = 0
-        self._pending_auto_play = True
-        self._open_part(next_index)
-        self._open_part(next_index)
 
     @Slot(int, float)
     def _persistent_opened(self, frame_count: int, fps: float) -> None:
@@ -711,7 +704,6 @@ class MainWindow(QMainWindow):
 
         self._persistent_buffer_ready = True
         self.reader_widget.play_pause_button.setEnabled(self._frame_count() > 1)
-        self.statusBar().showMessage(f"Tampon vidéo prêt : {buffered_count} images")
 
         # Un changement automatique de fichier attend un vrai tampon, pas
         # seulement la première image, afin de conserver la fluidité.
@@ -732,8 +724,6 @@ class MainWindow(QMainWindow):
         self._playback.set_frame_count(actual_frame_count)
         self._persistent_waiting_for_frame = False
         self._persistent_resume_after_frame = False
-
-        self.statusBar().showMessage(f"Fin réelle du flux détectée : {actual_frame_count} images")
 
     @Slot()
     def _persistent_finished(self) -> None:
@@ -815,29 +805,11 @@ class MainWindow(QMainWindow):
         self,
         event: QKeyEvent,
     ) -> None:
-        focused_widget = self.focusWidget()
-
-        editing_field = isinstance(
-            focused_widget,
-            (
-                QLineEdit,
-                QTextEdit,
-                QSpinBox,
-                QComboBox,
-            ),
-        )
-
-        # Dans les champs de saisie, Qt doit conserver
-        # les lettres, chiffres, flèches et espace.
-        if editing_field:
-            super().keyPressEvent(event)
-            return
-
         modifiers = event.modifiers()
         key = event.key()
 
-        # Les raccourcis avec Ctrl sont traités avant
-        # les touches simples réservées aux observations.
+        # Les raccourcis de vitesse restent utilisables
+        # même si le focus est dans un champ du panneau.
         if modifiers & Qt.KeyboardModifier.ControlModifier and key in (
             Qt.Key.Key_Plus,
             Qt.Key.Key_Equal,
@@ -851,34 +823,55 @@ class MainWindow(QMainWindow):
             event.accept()
             return
 
-        if key == Qt.Key.Key_Left:
-            self._show_previous_frame()
-            event.accept()
+        focused_widget = self.focusWidget()
+
+        editing_field = isinstance(
+            focused_widget,
+            (
+                QLineEdit,
+                QTextEdit,
+                QSpinBox,
+                QComboBox,
+            ),
+        )
+
+        # Dans un champ de saisie, Qt conserve les
+        # lettres, chiffres, signes, flèches et espace.
+        if editing_field:
+            super().keyPressEvent(event)
             return
 
-        if key == Qt.Key.Key_Right:
-            self._show_next_frame()
-            event.accept()
-            return
-
-        if key == Qt.Key.Key_Up:
-            self._open_previous_file()
-            event.accept()
-            return
-
-        if key == Qt.Key.Key_Down:
-            self._open_next_file()
-            event.accept()
-            return
-
-        if key == Qt.Key.Key_Space:
-            if not self._persistent_waiting_for_frame:
-                self._playback.toggle()
-
-            event.accept()
-            return
-
+        # Navigation vidéo uniquement sans Ctrl,
+        # Maj ou Alt.
         if modifiers == Qt.KeyboardModifier.NoModifier:
+            if key == Qt.Key.Key_Left:
+                self._show_previous_frame()
+                event.accept()
+                return
+
+            if key == Qt.Key.Key_Right:
+                self._show_next_frame()
+                event.accept()
+                return
+
+            if key == Qt.Key.Key_Up:
+                self._open_previous_file()
+                event.accept()
+                return
+
+            if key == Qt.Key.Key_Down:
+                self._open_next_file()
+                event.accept()
+                return
+
+            if key == Qt.Key.Key_Space:
+                if not self._persistent_waiting_for_frame:
+                    self._playback.toggle()
+
+                event.accept()
+                return
+
+            # Sélection du taxon par son raccourci.
             text = event.text().strip().upper()
 
             if text and self.quick_observation_panel.select_taxon_by_shortcut(text):
@@ -1000,3 +993,154 @@ class MainWindow(QMainWindow):
             "Aucune donnée n'a encore été enregistrée."
         )
         self.quick_observation_panel.reset_after_draft()
+
+    @Slot(object)
+    def _create_passage_from_draft(
+        self,
+        draft: ObservationDraft,
+    ) -> None:
+        if self._opened_station is None:
+            QMessageBox.information(
+                self,
+                "Aucune station",
+                "Ouvrez d'abord une station.",
+            )
+            return
+
+        video_part_id = self._current_video_part_id()
+
+        if video_part_id is None:
+            QMessageBox.information(
+                self,
+                "Aucune séquence",
+                "Ouvrez d'abord une séquence vidéo.",
+            )
+            return
+
+        frame = self._displayed_frame
+
+        if frame is None:
+            QMessageBox.information(
+                self,
+                "Aucune image",
+                "Aucune image vidéo n'est actuellement affichée.",
+            )
+            return
+
+        was_playing = self._playback.is_playing
+
+        if was_playing:
+            self._playback.pause()
+
+        try:
+            self._passage_service.create(
+                self._opened_station.database_path,
+                PassageInput(
+                    station_id=(self._opened_station.station_id),
+                    video_part_id=video_part_id,
+                    taxon_id=draft.taxon_id,
+                    frame_number=(frame.frame_number),
+                    position_ms=frame.position_ms,
+                    observed_at=(frame.absolute_timestamp),
+                    individual_count=(draft.individual_count),
+                    direction=draft.direction,
+                    confidence=draft.confidence,
+                    needs_review=(draft.needs_review),
+                    glass_position=(draft.glass_position),
+                    length_mm=draft.length_mm,
+                    comment=draft.comment,
+                ),
+            )
+
+        except (
+            OSError,
+            RuntimeError,
+            ValueError,
+        ) as error:
+            QMessageBox.critical(
+                self,
+                "Enregistrement impossible",
+                str(error),
+            )
+            return
+
+        self._update_current_part_observation_count(video_part_id)
+
+        self.quick_observation_panel.reset_after_draft()
+
+        direction_labels = {
+            -1: "dévalaison",
+            0: "sens indéterminé",
+            1: "montaison",
+        }
+
+        self.statusBar().showMessage(
+            
+                f"Passage enregistré : "
+                f"{draft.tax_code} "
+                f"×{draft.individual_count}, "
+                f"{direction_labels[draft.direction]}, "
+                f"image {frame.frame_number + 1}"
+            
+        )
+
+        if was_playing:
+            self._playback.play()
+
+    def _update_current_part_observation_count(
+        self,
+        video_part_id: int,
+    ) -> None:
+        if self._opened_station is None:
+            return
+
+        row = self._opened_station.connection.execute(
+            """
+                SELECT observation_count
+                FROM video_parts
+                WHERE id = ?
+                """,
+            (video_part_id,),
+        ).fetchone()
+
+        if row is None:
+            return
+
+        observation_count = int(row["observation_count"])
+
+        if self._current_part_index >= 0:
+            self.video_part_panel.set_observation_count(
+                self._current_part_index,
+                observation_count,
+            )
+
+    def _request_passage_direction(
+        self,
+        direction: int,
+    ) -> None:
+        focused_widget = self.focusWidget()
+
+        if isinstance(
+            focused_widget,
+            (
+                QLineEdit,
+                QTextEdit,
+                QSpinBox,
+                QComboBox,
+            ),
+        ):
+            return
+
+        if self._persistent_waiting_for_frame:
+            return
+
+        if (
+            self._opened_station is None
+            or self._current_part_index < 0
+            or self._displayed_frame is None
+        ):
+            self.statusBar().showMessage("Aucune image disponible pour enregistrer un passage.")
+            return
+
+        if not (self.quick_observation_panel.request_direction(direction)):
+            self.statusBar().showMessage("Sélectionnez d'abord une espèce.")
