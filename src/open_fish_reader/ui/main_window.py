@@ -31,6 +31,9 @@ from ..database.repositories.size_calibration_repository import (
     SizeCalibrationRepository,
 )
 from ..domain.indexed_video_part import IndexedVideoPart
+from ..services.media_export_service import (
+    MediaExportService,
+)
 from ..services.passage_service import (
     PassageInput,
     PassageService,
@@ -47,6 +50,9 @@ from ..video.frame import DecodedFrame
 from ..video.playback_controller import PlaybackController
 from .dialogs.day_selection_dialog import DaySelectionDialog
 from .dialogs.indexing_progress_dialog import IndexingProgressDialog
+from .dialogs.media_export_dialog import (
+    MediaExportDialog,
+)
 from .dialogs.passage_list_dialog import (
     PassageListDialog,
 )
@@ -152,6 +158,9 @@ class MainWindow(QMainWindow):
         self.reader_widget.next_file_button.clicked.connect(self._open_next_file)
         self.reader_widget.previous_frame_button.clicked.connect(self._show_previous_frame)
         self.reader_widget.next_frame_button.clicked.connect(self._show_next_frame)
+        self.reader_widget.export_button.clicked.connect(
+            self._open_media_export
+        )
         self._video_part_status_service = VideoPartStatusService()
         self._requested_initial_frame = 0
 
@@ -161,6 +170,7 @@ class MainWindow(QMainWindow):
         self.reader_widget.video_widget.measurement_finished.connect(self._finish_measurement)
 
         self.reader_widget.video_widget.measurement_cancelled.connect(self._measurement_cancelled)
+        self._media_export_service = MediaExportService()
 
         toolbar = QToolBar("Principal", self)
         toolbar.setMovable(False)
@@ -228,6 +238,7 @@ class MainWindow(QMainWindow):
         self._video_parts = []
         self._current_part_index = -1
         self._current_day_folder = None
+        self.reader_widget.export_button.setEnabled(False)
         self.reader_widget.station_label.setText(f"Station : {opened_station.station.name}")
         self.reader_widget.day_label.setText("Journée : -")
         self.reader_widget.clear_video_information()
@@ -385,9 +396,12 @@ class MainWindow(QMainWindow):
         if self._frame_thread is not None:
             return
         if index < 0 or index >= len(self._video_parts):
+            self.reader_widget.export_button.setEnabled(False)
             return
         if self.reader_widget.video_widget.measurement_active:
             return
+
+        self.reader_widget.export_button.setEnabled(False)
 
         # Sauvegarde de l'ancien fichier avant de
         # changer _current_part_index.
@@ -411,16 +425,8 @@ class MainWindow(QMainWindow):
                 self._opened_station.database_path,
                 part.id,
             )
+        self.reader_widget.export_button.setEnabled(part.video_path.is_file())
 
-        self.video_part_panel.mark_in_progress(index)
-        self.video_part_panel.set_current_row(index)
-
-        video_part_id = self._current_video_part_id()
-        if self._opened_station is not None and video_part_id is not None:
-            self._video_part_status_service.mark_opened(
-                self._opened_station.database_path,
-                video_part_id,
-            )
         self._decoded_frames = []
         self._current_frame_index = -1
         self._persistent_mode = False
@@ -1394,3 +1400,72 @@ class MainWindow(QMainWindow):
         self,
     ) -> None:
         self.statusBar().showMessage("Mesure annulée.")
+
+    def _open_media_export(self) -> None:
+        if (
+            self._opened_station is None
+            or self._current_part_index < 0
+            or self._current_part_index >= len(self._video_parts)
+        ):
+            return
+
+        part = self._video_parts[self._current_part_index]
+        frame = self._displayed_frame
+
+        if self._playback.is_playing:
+            self._playback.pause()
+
+        taxa = self.quick_observation_taxon_service.list_active(self._opened_station.database_path)
+
+        selected_taxon = self.quick_observation_panel.selected_taxon
+
+        dialog = MediaExportDialog(
+            taxa,
+            image_available=frame is not None,
+            video_available=(part.video_path.is_file()),
+            selected_taxon_id=(selected_taxon.id if selected_taxon is not None else None),
+            parent=self,
+        )
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        request = dialog.request()
+
+        try:
+            result = self._media_export_service.export(
+                request,
+                image=(frame.image if frame is not None else None),
+                source_video_path=(part.video_path),
+                station_slug=(self._opened_station.station.slug),
+                observed_at=(
+                    frame.absolute_timestamp if frame is not None else datetime.now().astimezone()
+                ),
+                frame_number=(frame.frame_number if frame is not None else 0),
+            )
+
+        except (
+            OSError,
+            ValueError,
+        ) as error:
+            QMessageBox.critical(
+                self,
+                "Export impossible",
+                str(error),
+            )
+            return
+
+        exported_paths = [
+            str(path)
+            for path in (
+                result.image_path,
+                result.video_path,
+            )
+            if path is not None
+        ]
+
+        QMessageBox.information(
+            self,
+            "Export terminé",
+            ("Fichier(s) exporté(s) :\n\n" + "\n".join(exported_paths)),
+        )

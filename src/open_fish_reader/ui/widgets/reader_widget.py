@@ -43,6 +43,8 @@ class ReaderWidget(QWidget):
         self.speed_control = SpeedControl()
         self.next_frame_button = QPushButton("Image suivante")
         self.next_file_button = QPushButton("Fichier suivant")
+        self.export_button = QPushButton("Exporter…")
+        self.export_button.setEnabled(False)
 
         self.play_pause_button.setEnabled(False)
 
@@ -64,6 +66,8 @@ class ReaderWidget(QWidget):
         controls_layout.addStretch()
         controls_layout.addWidget(self.next_frame_button)
         controls_layout.addWidget(self.next_file_button)
+        controls_layout.addWidget(self.next_file_button)
+        controls_layout.addWidget(self.export_button)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
