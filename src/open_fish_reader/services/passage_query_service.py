@@ -28,3 +28,20 @@ class PassageQueryService:
                 return PassageQueryRepository(connection).delete(passage_id)
         finally:
             connection.close()
+
+    def delete_many(
+        self,
+        database_path: Path,
+        passage_ids: list[int],
+    ) -> list[int]:
+        if not passage_ids:
+            return []
+
+        connection = open_database(database_path)
+
+        try:
+            with connection:
+                return PassageQueryRepository(connection).delete_many(passage_ids)
+
+        finally:
+            connection.close()

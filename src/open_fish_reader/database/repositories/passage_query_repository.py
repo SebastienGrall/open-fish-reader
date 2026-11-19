@@ -70,3 +70,78 @@ class PassageQueryRepository:
             (video_part_id,),
         )
         return video_part_id
+
+    def delete_many(
+        self,
+        passage_ids: list[int],
+    ) -> list[int]:
+        if not passage_ids:
+            return []
+
+        placeholders = ", ".join("?" for _passage_id in passage_ids)
+
+        rows = self.connection.execute(
+            f"""
+            SELECT DISTINCT video_part_id
+            FROM passages
+            WHERE id IN ({placeholders})
+            """,
+            tuple(passage_ids),
+        ).fetchall()
+
+        existing_count = self.connection.execute(
+            f"""
+                SELECT COUNT(*)
+                FROM passages
+                WHERE id IN ({placeholders})
+                """,
+            tuple(passage_ids),
+        ).fetchone()[0]
+
+        if existing_count != len(set(passage_ids)):
+            raise ValueError("Un ou plusieurs passages sélectionnés sont introuvables.")
+
+        video_part_ids = [int(row["video_part_id"]) for row in rows]
+
+        self.connection.execute(
+            f"""
+            DELETE FROM passages
+            WHERE id IN ({placeholders})
+            """,
+            tuple(passage_ids),
+        )
+
+        for video_part_id in video_part_ids:
+            actual_count = self.connection.execute(
+                """
+                    SELECT COUNT(*)
+                    FROM passages
+                    WHERE video_part_id = ?
+                    """,
+                (video_part_id,),
+            ).fetchone()[0]
+
+            self.connection.execute(
+                """
+                UPDATE video_parts
+                SET
+                    observation_count = ?,
+                    review_status = CASE
+                        WHEN ? > 0
+                        THEN 'observed'
+
+                        WHEN completed_at IS NOT NULL
+                        THEN 'read'
+
+                        ELSE review_status
+                    END
+                WHERE id = ?
+                """,
+                (
+                    actual_count,
+                    actual_count,
+                    video_part_id,
+                ),
+            )
+
+        return video_part_ids

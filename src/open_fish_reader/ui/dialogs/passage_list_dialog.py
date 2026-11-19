@@ -19,8 +19,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...services.passage_edit_service import (
+    PassageEditService,
+)
 from ...services.passage_query_service import PassageQueryService
 from ..models.passage_table_model import PassageTableModel
+from .passage_edit_dialog import (
+    PassageEditDialog,
+)
 
 CSV_FIELDS = (
     "passage_uuid",
@@ -58,6 +64,7 @@ class PassageListDialog(QDialog):
         self.setWindowTitle("Passages")
         self.resize(1220, 680)
         self.setModal(False)
+        self.edit_service = PassageEditService()
 
         title = QLabel("Passages enregistrés")
         title.setStyleSheet("font-size: 18px; font-weight: 600;")
@@ -67,6 +74,7 @@ class PassageListDialog(QDialog):
         self.end_date = QDateEdit(QDate(selected_day.year, selected_day.month, selected_day.day))
         self.end_date.setCalendarPopup(True)
         refresh_button = QPushButton("Actualiser")
+        edit_button = QPushButton("Modifier…")
         delete_button = QPushButton("Supprimer")
         open_button = QPushButton("Afficher dans le lecteur")
         export_button = QPushButton("Exporter CSV…")
@@ -79,10 +87,9 @@ class PassageListDialog(QDialog):
         filters.addWidget(refresh_button)
         filters.addStretch()
         filters.addWidget(open_button)
+        filters.addWidget(edit_button)
         filters.addWidget(export_button)
         filters.addWidget(delete_button)
-
-        export_button.clicked.connect(self._export_csv)
 
         self.model = PassageTableModel(self)
         self.table = QTableView()
@@ -90,7 +97,7 @@ class PassageListDialog(QDialog):
         self.table.setSortingEnabled(False)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setWordWrap(False)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.count_label = QLabel()
@@ -104,7 +111,9 @@ class PassageListDialog(QDialog):
         refresh_button.clicked.connect(self.reload)
         delete_button.clicked.connect(self._delete_selected)
         open_button.clicked.connect(self._open_selected)
-        self.table.doubleClicked.connect(lambda _index: self._open_selected())
+        edit_button.clicked.connect(self._edit_selected)
+        export_button.clicked.connect(self._export_csv)
+        self.table.doubleClicked.connect(lambda _index: self._edit_selected())
         self.reload()
 
     def reload(self) -> None:
@@ -128,30 +137,78 @@ class PassageListDialog(QDialog):
         return self.model.row_at(index.row()) if index.isValid() else None
 
     def _open_selected(self) -> None:
-        row = self._selected_row()
-        if row is not None:
-            self.passage_open_requested.emit(int(row["video_part_id"]), int(row["frame_number"]))
+        rows = self._selected_rows()
+
+        if len(rows) != 1:
+            QMessageBox.information(
+                self,
+                "Sélection invalide",
+                "Sélectionnez exactement un passage à afficher dans le lecteur.",
+            )
+            return
+
+        row = rows[0]
+
+        self.passage_open_requested.emit(
+            int(row["video_part_id"]),
+            int(row["frame_number"]),
+        )
 
     def _delete_selected(self) -> None:
-        row = self._selected_row()
-        if row is None:
+        rows = self._selected_rows()
+
+        if not rows:
+            QMessageBox.information(
+                self,
+                "Aucun passage sélectionné",
+                "Sélectionnez au moins un passage à supprimer.",
+            )
             return
+
+        if len(rows) == 1:
+            row = rows[0]
+
+            question = f"Supprimer le passage {row['tax_code']} du {row['observed_at']} ?"
+        else:
+            question = f"Supprimer définitivement les {len(rows)} passages sélectionnés ?"
+
         answer = QMessageBox.question(
             self,
-            "Supprimer le passage",
-            f"Supprimer le passage {row['tax_code']} du {row['observed_at']} ?",
+            "Supprimer les passages",
+            question,
+            (QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No),
+            QMessageBox.StandardButton.No,
         )
+
         if answer != QMessageBox.StandardButton.Yes:
             return
-        video_part_id = self.service.delete(
-            self.database_path,
-            int(row["id"]),
-        )
+
+        passage_ids = [int(row["id"]) for row in rows]
+
+        try:
+            video_part_ids = self.service.delete_many(
+                self.database_path,
+                passage_ids,
+            )
+
+        except (
+            ValueError,
+            OSError,
+            RuntimeError,
+        ) as error:
+            QMessageBox.critical(
+                self,
+                "Suppression impossible",
+                str(error),
+            )
+            return
 
         self.reload()
 
-        if video_part_id is not None:
+        for video_part_id in video_part_ids:
             self.passages_changed.emit(video_part_id)
+
+        self.count_label.setText(f"{len(rows)} passage(s) supprimé(s)")
 
     def _export_csv(self) -> None:
         row_count = self.model.rowCount()
@@ -236,3 +293,80 @@ class PassageListDialog(QDialog):
             "Export terminé",
             (f"{row_count} passage(s) ont été exportés dans :\n\n{output_path}"),
         )
+
+    def _edit_selected(self) -> None:
+        rows = self._selected_rows()
+
+        if len(rows) != 1:
+            QMessageBox.information(
+                self,
+                "Sélection invalide",
+                "Sélectionnez exactement un passage à modifier.",
+            )
+            return
+
+        row = rows[0]
+
+        if row is None:
+            return
+
+        try:
+            passage = self.edit_service.get_for_edit(
+                self.database_path,
+                int(row["id"]),
+            )
+
+            taxa = self.edit_service.list_taxa(self.database_path)
+
+        except ValueError as error:
+            QMessageBox.warning(
+                self,
+                "Passage introuvable",
+                str(error),
+            )
+            return
+
+        dialog = PassageEditDialog(
+            passage,
+            taxa,
+            self,
+        )
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        try:
+            self.edit_service.update(
+                self.database_path,
+                int(row["id"]),
+                dialog.value(),
+                measurement_method=str(passage["measurement_method"]),
+                original_glass_position=str(passage["glass_position"]),
+            )
+
+        except ValueError as error:
+            QMessageBox.warning(
+                self,
+                "Modification impossible",
+                str(error),
+            )
+            return
+
+        self.reload()
+
+        self.passages_changed.emit(int(row["video_part_id"]))
+
+    def _selected_rows(
+        self,
+    ) -> list[dict[str, object]]:
+        selected_indexes = self.table.selectionModel().selectedRows()
+
+        rows: list[dict[str, object]] = []
+
+        for index in selected_indexes:
+            row = self.model.row_at(index.row())
+
+            if row is not None:
+                rows.append(row)
+
+        return rows
