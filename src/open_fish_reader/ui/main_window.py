@@ -4,7 +4,12 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, Slot
+from PySide6.QtCore import (
+    QSettings,
+    Qt,
+    QThread,
+    Slot,
+)
 from PySide6.QtGui import (
     QCloseEvent,
     QKeyEvent,
@@ -34,6 +39,12 @@ from ..database.repositories.size_calibration_repository import (
     SizeCalibrationRepository,
 )
 from ..domain.indexed_video_part import IndexedVideoPart
+from ..services.database_backup_service import (
+    DatabaseBackupService,
+)
+from ..services.database_information_service import (
+    DatabaseInformationService,
+)
 from ..services.media_export_service import (
     MediaExportService,
 )
@@ -51,6 +62,7 @@ from ..version import APP_NAME, APP_VERSION
 from ..video.cache_policy import decide_full_cache
 from ..video.frame import DecodedFrame
 from ..video.playback_controller import PlaybackController
+from .dialogs.about_dialog import AboutDialog
 from .dialogs.day_selection_dialog import DaySelectionDialog
 from .dialogs.indexing_progress_dialog import IndexingProgressDialog
 from .dialogs.media_export_dialog import (
@@ -85,6 +97,12 @@ class MainWindow(QMainWindow):
         self._playback_queue_service = PlaybackQueueService()
         self._decoded_frames: list[DecodedFrame] = []
         self._current_frame_index = -1
+
+        self._database_backup_service = DatabaseBackupService()
+
+        self._database_information_service = DatabaseInformationService()
+
+        self._settings = QSettings()
 
         self._indexing_thread: QThread | None = None
         self._indexing_worker: DayIndexingWorker | None = None
@@ -210,11 +228,23 @@ class MainWindow(QMainWindow):
 
         toolbar.addSeparator()
 
+        toolbar.addAction(
+            "Sauvegarder la base…",
+            self._backup_database,
+        )
+
+        toolbar.addSeparator()
+
         help_button = QToolButton(self)
         help_button.setText("Aide")
         help_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         help_menu = QMenu(help_button)
         help_menu.addAction("Ouvrir le dossier des journaux", self._open_log_folder)
+        help_menu.addSeparator()
+        help_menu.addAction(
+            "À propos…",
+            self._show_about,
+        )
         help_button.setMenu(help_menu)
         toolbar.addWidget(help_button)
         toolbar.addSeparator()
@@ -1531,3 +1561,91 @@ class MainWindow(QMainWindow):
                 "Dossier inaccessible",
                 f"Impossible d'ouvrir le dossier :\n\n{log_folder}\n\n{error}",
             )
+
+    def _backup_database(self) -> None:
+        if self._opened_station is None:
+            QMessageBox.information(
+                self,
+                "Aucune station",
+                "Ouvrez d'abord une station.",
+            )
+            return
+
+        initial_folder = self._settings.value(
+            "database_backup/destination_folder",
+            str(get_app_paths().backups),
+            type=str,
+        )
+
+        destination = QFileDialog.getExistingDirectory(
+            self,
+            "Choisir le dossier de sauvegarde",
+            initial_folder,
+        )
+
+        if not destination:
+            return
+
+        try:
+            result = self._database_backup_service.backup(
+                self._opened_station.database_path,
+                Path(destination),
+                self._opened_station.station.slug,
+            )
+
+        except (
+            OSError,
+            RuntimeError,
+            ValueError,
+        ) as error:
+            logger.exception("Échec de la sauvegarde de la base")
+
+            QMessageBox.critical(
+                self,
+                "Sauvegarde impossible",
+                str(error),
+            )
+            return
+
+        self._settings.setValue(
+            "database_backup/destination_folder",
+            destination,
+        )
+
+        logger.info(
+            "Base sauvegardée : %s",
+            result.output_path,
+        )
+
+        QMessageBox.information(
+            self,
+            "Sauvegarde terminée",
+            (f"Base sauvegardée et vérifiée :\n\n{result.output_path}"),
+        )
+
+    def _show_about(self) -> None:
+        information = None
+
+        if self._opened_station is not None:
+            try:
+                information = self._database_information_service.read(
+                    self._opened_station.database_path
+                )
+
+            except (
+                OSError,
+                RuntimeError,
+            ) as error:
+                logger.exception("Lecture des informations de base impossible")
+
+                QMessageBox.warning(
+                    self,
+                    "Informations incomplètes",
+                    str(error),
+                )
+
+        dialog = AboutDialog(
+            information,
+            self,
+        )
+        dialog.exec()
