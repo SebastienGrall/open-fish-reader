@@ -65,6 +65,9 @@ from ..video.playback_controller import PlaybackController
 from .dialogs.about_dialog import AboutDialog
 from .dialogs.day_selection_dialog import DaySelectionDialog
 from .dialogs.indexing_progress_dialog import IndexingProgressDialog
+from .dialogs.keyboard_shortcuts_dialog import (
+    KeyboardShortcutsDialog,
+)
 from .dialogs.media_export_dialog import (
     MediaExportDialog,
 )
@@ -75,6 +78,9 @@ from .dialogs.size_calibration_dialog import (
     SizeCalibrationDialog,
 )
 from .dialogs.taxon_configuration_dialog import TaxonConfigurationDialog
+from .dialogs.user_guide_dialog import (
+    UserGuideDialog,
+)
 from .widgets.quick_observation_panel import (
     ObservationDraft,
     QuickObservationPanel,
@@ -239,8 +245,25 @@ class MainWindow(QMainWindow):
         help_button.setText("Aide")
         help_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         help_menu = QMenu(help_button)
-        help_menu.addAction("Ouvrir le dossier des journaux", self._open_log_folder)
+        help_menu.addAction(
+            "Guide rapide…",
+            self._show_user_guide,
+        )
+
+        help_menu.addAction(
+            "Raccourcis clavier…",
+            self._show_keyboard_shortcuts,
+        )
+
         help_menu.addSeparator()
+
+        help_menu.addAction(
+            "Ouvrir le dossier des journaux",
+            self._open_log_folder,
+        )
+
+        help_menu.addSeparator()
+
         help_menu.addAction(
             "À propos…",
             self._show_about,
@@ -1649,3 +1672,11 @@ class MainWindow(QMainWindow):
             self,
         )
         dialog.exec()
+
+    def _show_user_guide(self) -> None:
+        UserGuideDialog(self).exec()
+
+    def _show_keyboard_shortcuts(
+        self,
+    ) -> None:
+        KeyboardShortcutsDialog(self).exec()
