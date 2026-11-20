@@ -5,10 +5,15 @@ import sqlite3
 from datetime import datetime
 
 from PySide6 import __version__ as pyside_version
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtCore import Qt
+from PySide6.QtGui import (
+    QGuiApplication,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
+    QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -17,8 +22,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...core.resources import resource_path
 from ...domain.database_information import DatabaseInformation
-from ...version import APP_NAME, APP_VERSION
+from ...version import (
+    APP_DESCRIPTION,
+    APP_NAME,
+    APP_VERSION,
+    COPYRIGHT,
+    DEVELOPERS,
+    LICENSE_NAME,
+    ORGANIZATION_NAME,
+)
 
 
 class AboutDialog(QDialog):
@@ -28,28 +42,94 @@ class AboutDialog(QDialog):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+
         self.setWindowTitle(f"À propos de {APP_NAME}")
-        self.resize(650, 470)
+        self.resize(650, 650)
+
         self._text = self._build_text(database_information)
 
+        # Logo
+        logo_label = QLabel()
+
+        logo = QPixmap(str(resource_path("icons/open_fish_reader_256.png")))
+
+        if not logo.isNull():
+            logo_label.setPixmap(
+                logo.scaled(
+                    128,
+                    128,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+
+        logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        # Nom du logiciel
         title = QLabel(APP_NAME)
         title.setStyleSheet("font-size: 22px; font-weight: 700;")
-        subtitle = QLabel("Dépouillement vidéo et saisie des passages piscicoles")
-        subtitle.setWordWrap(True)
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        # Version
+        version_label = QLabel(f"Version {APP_VERSION}")
+        version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        version_label.setStyleSheet("color: palette(mid);")
+
+        # Organisme et crédits
+        developers_text = ", ".join(DEVELOPERS)
+
+        credits = QLabel(
+            f"<b>{APP_DESCRIPTION}</b>"
+            "<br><br>"
+            f"{ORGANIZATION_NAME}<br>"
+            f"Développement : {developers_text}<br>"
+            f"{COPYRIGHT}<br>"
+            f"Licence : {LICENSE_NAME}"
+        )
+        credits.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        credits.setWordWrap(True)
+        credits.setTextFormat(Qt.TextFormat.RichText)
+
+        # Informations techniques et base ouverte
         details = QTextEdit()
         details.setReadOnly(True)
         details.setPlainText(self._text)
+        details.setMinimumHeight(210)
 
+        # Actions
         copy_button = QPushButton("Copier les informations")
         copy_button.clicked.connect(self._copy)
+        license_button = QPushButton("Afficher la licence…")
+        license_button.clicked.connect(self._show_license)
+
+        actions_layout = QHBoxLayout()
+        actions_layout.addWidget(copy_button)
+        actions_layout.addWidget(license_button)
+        actions_layout.addStretch()
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
 
+        # Mise en page
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(
+            20,
+            16,
+            20,
+            16,
+        )
+        layout.setSpacing(10)
+
+        layout.addWidget(logo_label)
         layout.addWidget(title)
-        layout.addWidget(subtitle)
-        layout.addWidget(details, stretch=1)
-        layout.addWidget(copy_button)
+        layout.addWidget(version_label)
+        layout.addWidget(credits)
+        layout.addSpacing(8)
+        layout.addWidget(
+            details,
+            stretch=1,
+        )
+        layout.addLayout(actions_layout)
         layout.addWidget(buttons)
 
     @staticmethod
@@ -61,13 +141,23 @@ class AboutDialog(QDialog):
 
     @classmethod
     def _build_text(cls, database: DatabaseInformation | None) -> str:
+        developers_text = ", ".join(DEVELOPERS)
+
         lines = [
             "LOGICIEL",
-            f"Version {APP_NAME} : {APP_VERSION}",
+            f"Nom : {APP_NAME}",
+            f"Version : {APP_VERSION}",
+            f"Description : {APP_DESCRIPTION}",
+            f"Organisme : {ORGANIZATION_NAME}",
+            f"Développement : {developers_text}",
+            f"Copyright : {COPYRIGHT}",
+            f"Licence : {LICENSE_NAME}",
+            "",
+            "ENVIRONNEMENT",
             f"Python : {platform.python_version()}",
             f"PySide6 : {pyside_version}",
             f"SQLite : {sqlite3.sqlite_version}",
-            f"Système : {platform.system()} {platform.release()}",
+            (f"Système : {platform.system()} {platform.release()}"),
         ]
         if database is None:
             lines.extend(["", "BASE DE LA STATION", "Aucune station ouverte."])
@@ -93,3 +183,36 @@ class AboutDialog(QDialog):
             "Informations copiées",
             "Les informations ont été copiées dans le presse-papiers.",
         )
+
+    def _show_license(self) -> None:
+        license_path = resource_path("LICENSE")
+
+        try:
+            license_text = license_path.read_text(encoding="utf-8")
+        except OSError as error:
+            QMessageBox.warning(
+                self,
+                "Licence indisponible",
+                (f"Le fichier de licence est introuvable :\n\n{license_path}\n\n{error}"),
+            )
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Licence du logiciel")
+        dialog.resize(820, 650)
+
+        text = QTextEdit()
+        text.setReadOnly(True)
+        text.setPlainText(license_text)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dialog.reject)
+
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(
+            text,
+            stretch=1,
+        )
+        layout.addWidget(buttons)
+
+        dialog.exec()

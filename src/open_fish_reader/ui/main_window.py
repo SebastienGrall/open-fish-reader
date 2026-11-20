@@ -12,6 +12,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QCloseEvent,
+    QIcon,
     QKeyEvent,
     QKeySequence,
     QShortcut,
@@ -33,6 +34,7 @@ from PySide6.QtWidgets import (
 
 from ..core.exceptions import OpenFishReaderError
 from ..core.paths import get_app_paths
+from ..core.resources import resource_path
 from ..core.system_open import open_folder
 from ..database.connection import open_database
 from ..database.repositories.size_calibration_repository import (
@@ -97,6 +99,7 @@ logger = logging.getLogger(__name__)
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
+        self.setWindowIcon(QIcon(str(resource_path("icons/open_fish_reader.ico"))))
         self._opened_station: OpenedStation | None = None
         self._station_service = StationService()
         self._passage_service = PassageService()
