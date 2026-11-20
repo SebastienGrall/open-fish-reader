@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 
 
 class PassageTableModel(QAbstractTableModel):
     HEADERS = (
-        "Horodatage",
+        "Date et heure",
         "Code",
         "Nom commun",
         "Nombre",
@@ -30,7 +32,10 @@ class PassageTableModel(QAbstractTableModel):
         return 0 if parent is not None and parent.isValid() else len(self.HEADERS)
 
     def headerData(
-        self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole
+        self,
+        section: int,
+        orientation: Qt.Orientation,
+        role: int = Qt.ItemDataRole.DisplayRole,
     ):
         if (
             role == Qt.ItemDataRole.DisplayRole
@@ -46,17 +51,20 @@ class PassageTableModel(QAbstractTableModel):
         row = self._rows[index.row()]
         if role == Qt.ItemDataRole.UserRole:
             return row
+        if role == Qt.ItemDataRole.TextAlignmentRole and index.column() in {3, 6, 7, 11}:
+            return Qt.AlignmentFlag.AlignCenter
         if role not in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
             return None
+
         directions = {-1: "Dévalaison", 0: "Indéterminé", 1: "Montaison"}
         positions = {"near": "Proche", "middle": "Milieu", "far": "Loin"}
         values = (
-            row["observed_at"],
+            self._format_datetime(row["observed_at"]),
             row["tax_code"],
             row["common_name"],
             row["individual_count"],
             directions[int(row["direction"])],
-            row["confidence"],
+            str(row["confidence"]).capitalize(),
             "Oui" if row["needs_review"] else "Non",
             row["length_mm"] if row["length_mm"] is not None else "NA",
             positions[str(row["glass_position"])],
@@ -73,3 +81,11 @@ class PassageTableModel(QAbstractTableModel):
 
     def row_at(self, row: int) -> dict[str, object] | None:
         return self._rows[row] if 0 <= row < len(self._rows) else None
+
+    @staticmethod
+    def _format_datetime(value: object) -> str:
+        try:
+            parsed = datetime.fromisoformat(str(value)).astimezone()
+        except ValueError:
+            return str(value)
+        return parsed.strftime("%d/%m/%Y %H:%M:%S.%f")[:-3]

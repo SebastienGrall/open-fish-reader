@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import csv
-from datetime import date, datetime, time, timedelta
+from datetime import (
+    date,
+    timedelta,
+)
 from pathlib import Path
 
-from PySide6.QtCore import QDate, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QDateEdit,
     QDialog,
     QFileDialog,
     QHBoxLayout,
@@ -24,6 +26,9 @@ from ...services.passage_edit_service import (
 )
 from ...services.passage_query_service import PassageQueryService
 from ..models.passage_table_model import PassageTableModel
+from ..widgets.passage_datetime_filter import (
+    PassageDateTimeFilter,
+)
 from .passage_edit_dialog import (
     PassageEditDialog,
 )
@@ -68,23 +73,20 @@ class PassageListDialog(QDialog):
 
         title = QLabel("Passages enregistrés")
         title.setStyleSheet("font-size: 18px; font-weight: 600;")
-        selected_day = current_day or datetime.now().date()
-        self.start_date = QDateEdit(QDate(selected_day.year, selected_day.month, selected_day.day))
-        self.start_date.setCalendarPopup(True)
-        self.end_date = QDateEdit(QDate(selected_day.year, selected_day.month, selected_day.day))
-        self.end_date.setCalendarPopup(True)
-        refresh_button = QPushButton("Actualiser")
+        self.datetime_filter = PassageDateTimeFilter(current_day)
+
+        self.datetime_filter.refresh_requested.connect(self.reload)
         edit_button = QPushButton("Modifier…")
         delete_button = QPushButton("Supprimer")
         open_button = QPushButton("Afficher dans le lecteur")
         export_button = QPushButton("Exporter CSV…")
 
         filters = QHBoxLayout()
-        filters.addWidget(QLabel("Du"))
-        filters.addWidget(self.start_date)
-        filters.addWidget(QLabel("Au"))
-        filters.addWidget(self.end_date)
-        filters.addWidget(refresh_button)
+        filters.addWidget(
+            self.datetime_filter,
+            stretch=1,
+        )
+
         filters.addStretch()
         filters.addWidget(open_button)
         filters.addWidget(edit_button)
@@ -108,7 +110,6 @@ class PassageListDialog(QDialog):
         layout.addWidget(self.table, stretch=1)
         layout.addWidget(self.count_label)
 
-        refresh_button.clicked.connect(self.reload)
         delete_button.clicked.connect(self._delete_selected)
         open_button.clicked.connect(self._open_selected)
         edit_button.clicked.connect(self._edit_selected)
@@ -117,19 +118,27 @@ class PassageListDialog(QDialog):
         self.reload()
 
     def reload(self) -> None:
-        start_day = self.start_date.date().toPython()
-        end_day = self.end_date.date().toPython()
-        if end_day < start_day:
+        start_at, end_at = self.datetime_filter.period()
+
+        if end_at <= start_at:
             QMessageBox.warning(
-                self, "Période invalide", "La date de fin précède la date de début."
+                self,
+                "Période invalide",
+                ("La date et l'heure de fin doivent être postérieures au début."),
             )
             return
-        timezone = datetime.now().astimezone().tzinfo
-        start_at = datetime.combine(start_day, time.min, timezone)
-        end_at = datetime.combine(end_day + timedelta(days=1), time.min, timezone)
-        rows = self.service.list_for_period(self.database_path, self.station_id, start_at, end_at)
+
+        rows = self.service.list_for_period(
+            self.database_path,
+            self.station_id,
+            start_at,
+            end_at,
+        )
+
         self.model.set_rows(rows)
+
         self.count_label.setText(f"{len(rows)} passage(s)")
+
         self.table.resizeColumnsToContents()
 
     def _selected_row(self) -> dict[str, object] | None:
@@ -221,10 +230,11 @@ class PassageListDialog(QDialog):
             )
             return
 
-        start_text = self.start_date.date().toString("yyyy-MM-dd")
-        end_text = self.end_date.date().toString("yyyy-MM-dd")
+        start_at, end_at = self.datetime_filter.period()
 
-        default_name = f"passages_{start_text}_au_{end_text}.csv"
+        end_inclusive = end_at - timedelta(minutes=1)
+
+        default_name = f"passages_{start_at:%Y-%m-%d_%H-%M}_au_{end_inclusive:%Y-%m-%d_%H-%M}.csv"
 
         selected_path, _selected_filter = QFileDialog.getSaveFileName(
             self,
