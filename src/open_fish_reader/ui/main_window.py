@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from pathlib import Path
 
@@ -26,6 +27,8 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.exceptions import OpenFishReaderError
+from ..core.paths import get_app_paths
+from ..core.system_open import open_folder
 from ..database.connection import open_database
 from ..database.repositories.size_calibration_repository import (
     SizeCalibrationRepository,
@@ -69,6 +72,8 @@ from .widgets.video_part_panel import VideoPartPanel
 from .workers.day_indexing_worker import DayIndexingWorker
 from .workers.frame_sequence_worker import FrameSequenceWorker
 from .workers.persistent_video_worker import PersistentVideoWorker
+
+logger = logging.getLogger(__name__)
 
 
 class MainWindow(QMainWindow):
@@ -158,9 +163,7 @@ class MainWindow(QMainWindow):
         self.reader_widget.next_file_button.clicked.connect(self._open_next_file)
         self.reader_widget.previous_frame_button.clicked.connect(self._show_previous_frame)
         self.reader_widget.next_frame_button.clicked.connect(self._show_next_frame)
-        self.reader_widget.export_button.clicked.connect(
-            self._open_media_export
-        )
+        self.reader_widget.export_button.clicked.connect(self._open_media_export)
         self._video_part_status_service = VideoPartStatusService()
         self._requested_initial_frame = 0
 
@@ -207,6 +210,15 @@ class MainWindow(QMainWindow):
 
         toolbar.addSeparator()
 
+        help_button = QToolButton(self)
+        help_button.setText("Aide")
+        help_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        help_menu = QMenu(help_button)
+        help_menu.addAction("Ouvrir le dossier des journaux", self._open_log_folder)
+        help_button.setMenu(help_menu)
+        toolbar.addWidget(help_button)
+        toolbar.addSeparator()
+
         toolbar.addAction(
             "Quitter",
             self.close,
@@ -222,9 +234,18 @@ class MainWindow(QMainWindow):
         if not selected_folder:
             return
 
+        logger.info(
+            "Ouverture de station demandée : %s",
+            selected_folder,
+        )
+
         try:
             opened_station = self._station_service.open_station(Path(selected_folder))
         except (OpenFishReaderError, OSError, ValueError) as error:
+            logger.exception(
+                "Échec de l'ouverture de la station : %s",
+                selected_folder,
+            )
             QMessageBox.critical(self, "Station invalide", str(error))
             return
 
@@ -234,6 +255,12 @@ class MainWindow(QMainWindow):
         self._displayed_frame = None
         self._close_opened_station()
         self._opened_station = opened_station
+        logger.info(
+            ("Station ouverte : %s | base=%s | jours=%s"),
+            opened_station.station.name,
+            opened_station.database_path,
+            opened_station.detected_day_count,
+        )
         self._reload_quick_observation_taxa()
         self._video_parts = []
         self._current_part_index = -1
@@ -355,10 +382,15 @@ class MainWindow(QMainWindow):
     def _indexing_failed(self, message: str) -> None:
         QMessageBox.critical(self, "Erreur d'indexation", message)
         self.statusBar().showMessage("Échec de l'indexation")
+        logger.error(
+            "Échec de l'indexation : %s",
+            message,
+        )
 
     @Slot()
     def _indexing_cancelled(self) -> None:
         self.statusBar().showMessage("Indexation annulée")
+        logger.info("Indexation annulée")
 
     @Slot()
     def _indexing_finished(self) -> None:
@@ -640,6 +672,10 @@ class MainWindow(QMainWindow):
             message,
         )
         self.statusBar().showMessage("Échec du décodage vidéo")
+        logger.error(
+            "Échec du décodage vidéo : %s",
+            message,
+        )
 
     @Slot()
     def _frame_worker_finished(self) -> None:
@@ -851,6 +887,7 @@ class MainWindow(QMainWindow):
             self._opened_station = None
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        logger.info("Fermeture de la fenêtre principale")
         self._playback.pause()
         self._save_current_video_position()
         if self._indexing_worker is not None:
@@ -1132,6 +1169,15 @@ class MainWindow(QMainWindow):
                 str(error),
             )
             return
+
+        logger.info(
+            ("Passage créé : video_part_id=%s taxon_id=%s frame=%s count=%s direction=%s"),
+            video_part_id,
+            draft.taxon_id,
+            frame.frame_number,
+            draft.individual_count,
+            draft.direction,
+        )
 
         self._update_video_part_observation_count(video_part_id)
 
@@ -1469,3 +1515,19 @@ class MainWindow(QMainWindow):
             "Export terminé",
             ("Fichier(s) exporté(s) :\n\n" + "\n".join(exported_paths)),
         )
+        logger.info(
+            "Export média terminé : %s",
+            exported_paths,
+        )
+
+    def _open_log_folder(self) -> None:
+        log_folder = get_app_paths().logs
+        try:
+            open_folder(log_folder)
+        except Exception as error:
+            logger.exception("Impossible d'ouvrir le dossier des journaux")
+            QMessageBox.warning(
+                self,
+                "Dossier inaccessible",
+                f"Impossible d'ouvrir le dossier :\n\n{log_folder}\n\n{error}",
+            )
