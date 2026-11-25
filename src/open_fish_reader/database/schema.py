@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import sqlite3
 
-from ..core.constants import DATABASE_SCHEMA_VERSION
 from .catalog_schema import create_catalog_schema
-from .migration_v8 import migrate_to_v8
 from .migrations import migrate_database
 from .passage_schema import (
     create_passage_schema,
 )
+
+INITIAL_SCHEMA_VERSION = 4
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS database_metadata (
@@ -109,7 +110,6 @@ def create_initial_schema(connection: sqlite3.Connection, app_version: str, now_
     connection.executescript(SCHEMA)
     create_catalog_schema(connection)
     create_passage_schema(connection)
-    migrate_to_v8(connection)
     connection.execute(
         """
         INSERT OR IGNORE INTO database_metadata (
@@ -117,7 +117,7 @@ def create_initial_schema(connection: sqlite3.Connection, app_version: str, now_
             created_with_app_version, last_opened_with_app_version
         ) VALUES (1, ?, ?, ?, ?, ?)
         """,
-        (DATABASE_SCHEMA_VERSION, now_iso, now_iso, app_version, app_version),
+        (INITIAL_SCHEMA_VERSION, now_iso, now_iso, app_version, app_version),
     )
     migrate_database(connection)
     connection.execute(
