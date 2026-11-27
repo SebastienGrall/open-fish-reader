@@ -976,19 +976,40 @@ class MainWindow(QMainWindow):
             self._opened_station.connection.close()
             self._opened_station = None
 
-    def closeEvent(self, event: QCloseEvent) -> None:
+    def closeEvent(
+        self,
+        event: QCloseEvent,
+    ) -> None:
         logger.info("Fermeture de la fenêtre principale")
-        self._playback.pause()
-        self._save_current_video_position()
-        if self._indexing_worker is not None:
-            self._indexing_worker.cancel()
-        if self._indexing_thread is not None:
-            self._indexing_thread.quit()
-            self._indexing_thread.wait(3000)
-        self._stop_persistent_worker()
-        self._stop_frame_worker()
-        self._close_opened_station()
-        super().closeEvent(event)
+
+        try:
+            self._playback.pause()
+
+            if self._indexing_worker is not None:
+                self._indexing_worker.cancel()
+
+            if self._indexing_thread is not None:
+                self._indexing_thread.quit()
+
+                if not self._indexing_thread.wait(3000):
+                    logger.warning("Le thread d'indexation ne s'est pas arrêté sous 3 secondes.")
+
+            if self._persistent_thread is not None:
+                self._stop_persistent_worker()
+
+            if self._frame_thread is not None:
+                self._stop_frame_worker()
+
+            if self._opened_station is not None:
+                if 0 <= self._current_part_index < len(self._video_parts):
+                    self._save_current_video_position()
+
+                self._close_opened_station()
+
+        except Exception:
+            logger.exception("Erreur pendant la fermeture de l'application")
+
+        event.accept()
 
     def keyPressEvent(
         self,
