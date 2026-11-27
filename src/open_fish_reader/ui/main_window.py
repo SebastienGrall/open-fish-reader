@@ -783,7 +783,7 @@ class MainWindow(QMainWindow):
 
     @Slot(bool)
     def _playback_state_changed(self, playing: bool) -> None:
-        self.reader_widget.play_pause_button.setText("Pause" if playing else "Lecture")
+        self.reader_widget.set_playing(playing)
         frame_count = self._frame_count()
         self.reader_widget.set_frame_navigation_enabled(
             has_previous_frame=(not playing and self._current_frame_index > 0),
