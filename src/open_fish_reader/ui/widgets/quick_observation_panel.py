@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -54,8 +55,12 @@ class QuickObservationPanel(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setMinimumWidth(275)
+        self.setMinimumWidth(310)
         self.setMaximumWidth(390)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Expanding,
+        )
         self._selected_taxon: Taxon | None = None
         self._taxon_buttons: dict[int, TaxonButton] = {}
         self._measurement_points: tuple[tuple[float, float], ...] = ()

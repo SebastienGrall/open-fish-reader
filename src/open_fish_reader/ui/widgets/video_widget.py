@@ -5,7 +5,7 @@ from itertools import pairwise
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QKeyEvent, QMouseEvent, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QSizePolicy, QWidget
 
 
 class VideoWidget(QWidget):
@@ -18,9 +18,13 @@ class VideoWidget(QWidget):
         self._image: QImage | None = None
         self._measurement_active = False
         self._measurement_points: list[QPointF] = []
-        self.setMinimumSize(640, 420)
+        self.setMinimumSize(240, 180)
         self.setStyleSheet("background-color: #111;")
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Expanding,
+        )
 
     def set_image(self, image: QImage) -> None:
         self._image = image

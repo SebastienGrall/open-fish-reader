@@ -14,7 +14,7 @@ class VideoPartPanel(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setMinimumWidth(225)
+        self.setMinimumWidth(210)
         self.setMaximumWidth(420)
 
         title = QLabel("Séquences")
