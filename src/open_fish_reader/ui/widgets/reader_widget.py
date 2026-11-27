@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QPushButton,
     QSizePolicy,
+    QStyle,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -44,12 +46,31 @@ class ReaderWidget(QWidget):
 
         self.video_widget = VideoWidget()
 
-        self.previous_file_button = QPushButton("Fichier précédent")
-        self.previous_frame_button = QPushButton("Image précédente")
-        self.play_pause_button = QPushButton("Lecture")
+        self.previous_file_button = self._navigation_button(
+            QStyle.StandardPixmap.SP_MediaSkipBackward,
+            "Fichier précédent (↑)",
+        )
+
+        self.previous_frame_button = self._navigation_button(
+            QStyle.StandardPixmap.SP_MediaSeekBackward,
+            "Image précédente (←)",
+        )
+
+        self.play_pause_button = self._navigation_button(
+            QStyle.StandardPixmap.SP_MediaPlay,
+            "Lecture / pause (Espace)",
+        )
+
         self.speed_control = SpeedControl()
-        self.next_frame_button = QPushButton("Image suivante")
-        self.next_file_button = QPushButton("Fichier suivant")
+        self.next_frame_button = self._navigation_button(
+            QStyle.StandardPixmap.SP_MediaSeekForward,
+            "Image suivante (→)",
+        )
+
+        self.next_file_button = self._navigation_button(
+            QStyle.StandardPixmap.SP_MediaSkipForward,
+            "Fichier suivant (↓)",
+        )
         self.export_button = QPushButton("Exporter…")
         self.export_button.setEnabled(False)
 
@@ -58,6 +79,31 @@ class ReaderWidget(QWidget):
         self.previous_frame_button.setEnabled(False)
         self.next_frame_button.setEnabled(False)
 
+        navigation_layout = QHBoxLayout()
+        navigation_layout.setContentsMargins(
+            0,
+            0,
+            0,
+            0,
+        )
+        navigation_layout.setSpacing(4)
+
+        navigation_layout.addWidget(self.previous_file_button)
+        navigation_layout.addWidget(self.previous_frame_button)
+
+        navigation_layout.addSpacing(4)
+
+        navigation_layout.addWidget(self.play_pause_button)
+        navigation_layout.addWidget(self.speed_control)
+
+        navigation_layout.addSpacing(4)
+
+        navigation_layout.addWidget(self.next_frame_button)
+        navigation_layout.addWidget(self.next_file_button)
+
+        self.export_button.setMinimumWidth(85)
+        self.export_button.setMaximumWidth(105)
+
         controls_layout = QHBoxLayout()
         controls_layout.setContentsMargins(
             0,
@@ -65,15 +111,11 @@ class ReaderWidget(QWidget):
             0,
             0,
         )
-        controls_layout.addWidget(self.previous_file_button)
-        controls_layout.addWidget(self.previous_frame_button)
-        controls_layout.addStretch()
-        controls_layout.addWidget(self.play_pause_button)
-        controls_layout.addWidget(self.speed_control)
-        controls_layout.addStretch()
-        controls_layout.addWidget(self.next_frame_button)
-        controls_layout.addWidget(self.next_file_button)
-        controls_layout.addWidget(self.next_file_button)
+        controls_layout.setSpacing(6)
+
+        controls_layout.addStretch(1)
+        controls_layout.addLayout(navigation_layout)
+        controls_layout.addStretch(1)
         controls_layout.addWidget(self.export_button)
 
         layout = QVBoxLayout(self)
@@ -125,3 +167,35 @@ class ReaderWidget(QWidget):
         self.timestamp_label.setText("Horodatage : -")
         self.video_widget.clear()
         self.set_frame_navigation_enabled(False, False)
+
+    def _navigation_button(
+        self,
+        standard_pixmap: QStyle.StandardPixmap,
+        tooltip: str,
+    ) -> QToolButton:
+        button = QToolButton(self)
+
+        button.setIcon(self.style().standardIcon(standard_pixmap))
+        button.setToolTip(tooltip)
+        button.setStatusTip(tooltip)
+        button.setAccessibleName(tooltip)
+        button.setAutoRaise(True)
+        button.setFixedSize(34, 30)
+        button.setIconSize(QSize(20, 20))
+
+        return button
+
+    def set_playing(
+        self,
+        playing: bool,
+    ) -> None:
+        if playing:
+            standard_pixmap = QStyle.StandardPixmap.SP_MediaPause
+            tooltip = "Pause (Espace)"
+        else:
+            standard_pixmap = QStyle.StandardPixmap.SP_MediaPlay
+            tooltip = "Lecture (Espace)"
+
+        self.play_pause_button.setIcon(self.style().standardIcon(standard_pixmap))
+        self.play_pause_button.setToolTip(tooltip)
+        self.play_pause_button.setStatusTip(tooltip)
