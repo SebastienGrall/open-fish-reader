@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Open Fish Reader
+GenericName=Fish passage video review
+Comment=Dépouillement vidéo et saisie des passages piscicoles
+Exec=open-fish-reader
+Icon=open-fish-reader
+Terminal=false
+Categories=Science;Education;AudioVideo;
+Keywords=fish;video;passage;poisson;comptage;
+StartupNotify=true

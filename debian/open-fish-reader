@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /opt/open-fish-reader/open-fish-reader "$@"
