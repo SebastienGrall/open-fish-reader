@@ -13,3 +13,8 @@ dist/
 installer_output/
 build_tools/windows_version_info.txt
 
+# Construction Debian
+deb_dist/
+build/deb/
+build/linux/
+dist/open-fish-reader/
