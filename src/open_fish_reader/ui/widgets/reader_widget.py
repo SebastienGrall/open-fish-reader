@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -21,6 +22,12 @@ class ReaderWidget(QWidget):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        self.setMinimumWidth(0)
+
+        self.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Expanding,
+        )
 
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 

@@ -166,15 +166,49 @@ class MainWindow(QMainWindow):
         )
 
         self.reader_splitter = QSplitter(Qt.Orientation.Horizontal)
+
         self.reader_splitter.setChildrenCollapsible(False)
+
         self.reader_splitter.addWidget(self.video_part_panel)
         self.reader_splitter.addWidget(self.reader_widget)
         self.reader_splitter.addWidget(self.quick_observation_panel)
-        self.reader_splitter.setStretchFactor(0, 0)
-        self.reader_splitter.setStretchFactor(1, 1)
-        self.reader_splitter.setStretchFactor(2, 0)
-        self.reader_splitter.setSizes([250, 850, 310])
+
+        self.reader_splitter.setStretchFactor(
+            0,
+            0,
+        )
+        self.reader_splitter.setStretchFactor(
+            1,
+            1,
+        )
+        self.reader_splitter.setStretchFactor(
+            2,
+            0,
+        )
+
+        self.reader_splitter.setCollapsible(
+            0,
+            False,
+        )
+        self.reader_splitter.setCollapsible(
+            1,
+            False,
+        )
+        self.reader_splitter.setCollapsible(
+            2,
+            False,
+        )
+
+        self.reader_splitter.setSizes(
+            [
+                220,
+                600,
+                320,
+            ]
+        )
+
         self.setCentralWidget(self.reader_splitter)
+
         self._playback = PlaybackController(self)
         self._playback.frame_changed.connect(self._playback_frame_changed)
         self._playback.playing_changed.connect(self._playback_state_changed)

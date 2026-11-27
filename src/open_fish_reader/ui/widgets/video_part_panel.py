@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QModelIndex, Qt, Signal
-from PySide6.QtWidgets import QAbstractItemView, QLabel, QListView, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QLabel,
+    QListView,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ...domain.indexed_video_part import IndexedVideoPart
 from ..models.video_part_list_item import VideoPartListItem, VideoPartStatus
@@ -16,6 +23,10 @@ class VideoPartPanel(QWidget):
         super().__init__(parent)
         self.setMinimumWidth(210)
         self.setMaximumWidth(420)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Expanding,
+        )
 
         title = QLabel("Séquences")
         title.setStyleSheet("font-size: 15px; font-weight: 600; padding: 4px;")

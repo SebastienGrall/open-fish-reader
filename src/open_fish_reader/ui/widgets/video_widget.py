@@ -18,7 +18,7 @@ class VideoWidget(QWidget):
         self._image: QImage | None = None
         self._measurement_active = False
         self._measurement_points: list[QPointF] = []
-        self.setMinimumSize(240, 180)
+        self.setMinimumSize(0, 180)
         self.setStyleSheet("background-color: #111;")
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setSizePolicy(
